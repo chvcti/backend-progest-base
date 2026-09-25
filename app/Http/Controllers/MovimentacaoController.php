@@ -154,6 +154,78 @@ class MovimentacaoController extends Controller
         }
     }
 
+    // Listar movimentações em geral
+    public function index(Request $request)
+    {
+        $query = Movimentacao::with([
+            'usuario',
+            'aprovador',
+            'setorOrigem.polo',
+            'setorDestino.polo',
+            'itens.produto.unidadeMedida',
+            'itens.devolucoes',
+            'devolucoes.usuario',
+            'devolucoes.pedido.setorDestino'
+        ]);
+
+        if ($request->has('setor_id')) {
+            $setorId = $request->input('setor_id');
+            $query->where(function ($q) use ($setorId) {
+                $q->where('setor_origem_id', $setorId)
+                  ->orWhere('setor_destino_id', $setorId);
+            });
+        }
+
+        if ($request->has('tipo')) {
+            $query->where('tipo', $request->input('tipo'));
+        }
+
+        if ($request->has('status')) {
+            $query->where('status_solicitacao', $request->input('status'));
+        }
+
+        $movs = $query->orderBy('data_hora', 'desc')->get()->map(function ($m) {
+            $distinctCount = 0;
+            if ($m->relationLoaded('itens') && $m->itens->isNotEmpty()) {
+                $distinctCount = $m->itens->pluck('produto_id')->unique()->count();
+            }
+            $m->total_itens = $distinctCount;
+            $m->numero_pedido = $m->id;
+            $m->tem_devolucao = $m->devolucoes && $m->devolucoes->count() > 0;
+
+            if ($m->relationLoaded('itens')) {
+                $isAtendido = ($m->status_solicitacao === 'A');
+                foreach ($m->itens as $item) {
+                    if ($isAtendido) {
+                        $qtdDev = 0;
+                        if ($item->relationLoaded('devolucoes') && $item->devolucoes->isNotEmpty()) {
+                            $qtdDev = (float) $item->devolucoes->sum('quantidade');
+                        } elseif ($m->relationLoaded('devolucoes') && $m->devolucoes->isNotEmpty()) {
+                            $qtdDev = (float) $m->devolucoes->where('item_movimentacao_id', $item->id)->sum('quantidade');
+                        } else {
+                            $qtdDev = (float) \App\Models\Devolucao::where('item_movimentacao_id', $item->id)->sum('quantidade');
+                        }
+                        $item->quantidade_devolvida = $qtdDev;
+                    } else {
+                        $item->quantidade_devolvida = 0;
+                    }
+
+                    $raw = $item->getRawOriginal('lote');
+                    if (is_string($raw) && !empty($raw)) {
+                        $decoded = json_decode($raw, true);
+                        $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null, 'data_vencimento' => null]];
+                    } else {
+                        $item->lotes_parsed = [];
+                    }
+                }
+            }
+
+            return $m;
+        });
+
+        return response()->json(['status' => true, 'data' => $movs]);
+    }
+
     // Listar solicitações por setor (relacionada como origem OU destino)
     public function listBySetor(Request $request)
     {
@@ -163,7 +235,16 @@ class MovimentacaoController extends Controller
             return response()->json(['status' => false, 'message' => 'setor_id (ou unidade_id) é obrigatório'], 422);
         }
 
-        $query = Movimentacao::with(['usuario', 'aprovador', 'setorOrigem', 'setorDestino', 'itens.produto', 'devolucoes.usuario', 'devolucoes.pedido.setorDestino'])
+        $query = Movimentacao::with([
+            'usuario',
+            'aprovador',
+            'setorOrigem.polo',
+            'setorDestino.polo',
+            'itens.produto.unidadeMedida',
+            'itens.devolucoes',
+            'devolucoes.usuario',
+            'devolucoes.pedido.setorDestino'
+        ])
             ->where(function ($q) use ($setorId) {
                 $q->where('setor_origem_id', $setorId)
                   ->orWhere('setor_destino_id', $setorId);
@@ -206,14 +287,28 @@ class MovimentacaoController extends Controller
                 // Adiciona a flag tem_devolucao
                 $m->tem_devolucao = $m->devolucoes && $m->devolucoes->count() > 0;
 
-                // Normaliza o campo `lote` de cada item: parseia o JSON e expõe
-                // como `lotes_parsed` (array) para consumo direto no frontend.
+                // Normaliza o campo `lote` e consolida `quantidade_devolvida` de cada item
                 if ($m->relationLoaded('itens')) {
+                    $isAtendido = ($m->status_solicitacao === 'A');
                     foreach ($m->itens as $item) {
-                        $raw = $item->lote;
+                        if ($isAtendido) {
+                            $qtdDev = 0;
+                            if ($item->relationLoaded('devolucoes') && $item->devolucoes->isNotEmpty()) {
+                                $qtdDev = (float) $item->devolucoes->sum('quantidade');
+                            } elseif ($m->relationLoaded('devolucoes') && $m->devolucoes->isNotEmpty()) {
+                                $qtdDev = (float) $m->devolucoes->where('item_movimentacao_id', $item->id)->sum('quantidade');
+                            } else {
+                                $qtdDev = (float) \App\Models\Devolucao::where('item_movimentacao_id', $item->id)->sum('quantidade');
+                            }
+                            $item->quantidade_devolvida = $qtdDev;
+                        } else {
+                            $item->quantidade_devolvida = 0;
+                        }
+
+                        $raw = $item->getRawOriginal('lote');
                         if (is_string($raw) && !empty($raw)) {
                             $decoded = json_decode($raw, true);
-                            $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null]];
+                            $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null, 'data_vencimento' => null]];
                         } else {
                             $item->lotes_parsed = [];
                         }
@@ -232,20 +327,44 @@ class MovimentacaoController extends Controller
     // Detalhes / itens da movimentação
     public function show($id)
     {
-        $mov = Movimentacao::with(['itens.produto.unidadeMedida', 'usuario', 'aprovador', 'setorOrigem', 'setorDestino', 'devolucoes.usuario', 'devolucoes.pedido.setorDestino'])->find($id);
+        $mov = Movimentacao::with([
+            'itens.produto.unidadeMedida',
+            'itens.devolucoes',
+            'usuario',
+            'aprovador',
+            'setorOrigem.polo',
+            'setorDestino.polo',
+            'devolucoes.usuario',
+            'devolucoes.pedido.setorDestino'
+        ])->find($id);
+
         if (!$mov) {
             return response()->json(['status' => false, 'message' => 'Movimentação não encontrada'], 404);
         }
 
         $mov->tem_devolucao = $mov->devolucoes && $mov->devolucoes->count() > 0;
-        $mov->numero_pedido  = $mov->id;
+        $mov->numero_pedido = $mov->id;
 
-        // Normaliza `lotes_parsed` para cada item
+        $isAtendido = ($mov->status_solicitacao === 'A');
         foreach ($mov->itens as $item) {
-            $raw = $item->lote;
+            if ($isAtendido) {
+                $qtdDev = 0;
+                if ($item->relationLoaded('devolucoes') && $item->devolucoes->isNotEmpty()) {
+                    $qtdDev = (float) $item->devolucoes->sum('quantidade');
+                } elseif ($mov->relationLoaded('devolucoes') && $mov->devolucoes->isNotEmpty()) {
+                    $qtdDev = (float) $mov->devolucoes->where('item_movimentacao_id', $item->id)->sum('quantidade');
+                } else {
+                    $qtdDev = (float) \App\Models\Devolucao::where('item_movimentacao_id', $item->id)->sum('quantidade');
+                }
+                $item->quantidade_devolvida = $qtdDev;
+            } else {
+                $item->quantidade_devolvida = 0;
+            }
+
+            $raw = $item->getRawOriginal('lote');
             if (is_string($raw) && !empty($raw)) {
                 $decoded = json_decode($raw, true);
-                $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null]];
+                $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null, 'data_vencimento' => null]];
             } else {
                 $item->lotes_parsed = [];
             }

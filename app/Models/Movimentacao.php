@@ -26,9 +26,6 @@ class Movimentacao extends Model
 
     public function getNumeroPedidoAttribute()
     {
-        if ($this->tipo === 'D' && !empty($this->observacao) && preg_match('/pedido #(\d+)/i', $this->observacao, $matches)) {
-            return (int) $matches[1];
-        }
         return $this->id;
     }
 

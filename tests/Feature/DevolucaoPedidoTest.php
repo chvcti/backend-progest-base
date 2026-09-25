@@ -342,4 +342,53 @@ class DevolucaoPedidoTest extends TestCase
         $lote1->refresh();
         $this->assertEquals(3, intval($lote1->quantidade_disponivel));
     }
+
+    public function test_item_atendido_expoe_lote_e_quantidade_devolvida_consolidada()
+    {
+        // 1. Registra devolução de 3 unidades para o item
+        $this->actingAs($this->user)->postJson("/api/movimentacao/{$this->movimentacao->id}/devolver", [
+            'item_movimentacao_id' => $this->itemMovimentacao->id,
+            'lote' => 'LOTE-TESTE-1',
+            'quantidade' => 3,
+            'motivo' => 'Devolução teste'
+        ])->assertStatus(200);
+
+        // 2. Consulta via show
+        $resShow = $this->actingAs($this->user)->getJson("/api/movimentacao/{$this->movimentacao->id}");
+        $resShow->assertStatus(200);
+        $data = $resShow->json('data');
+
+        $this->assertEquals($this->movimentacao->id, $data['numero_pedido']);
+        $this->assertNotEmpty($data['itens']);
+
+        $itemPayload = $data['itens'][0];
+        $this->assertEquals(3, $itemPayload['quantidade_devolvida']);
+        $this->assertNotNull($itemPayload['numero_lote']);
+        $this->assertStringContainsString('LOTE-TESTE-1', $itemPayload['numero_lote']);
+        $this->assertIsArray($itemPayload['lotes_parsed']);
+
+        // 3. Testa item em pedido sem devolução (deve retornar 0)
+        $movSemDev = Movimentacao::create([
+            'usuario_id' => $this->user->id,
+            'aprovador_usuario_id' => $this->user->id,
+            'setor_origem_id' => $this->setorDistribuidor->id,
+            'setor_destino_id' => $this->setorConsumidor->id,
+            'tipo' => 'S',
+            'status_solicitacao' => 'A',
+            'data_hora' => now()
+        ]);
+        $itemSemDev = ItemMovimentacao::create([
+            'movimentacao_id' => $movSemDev->id,
+            'produto_id' => $this->produto->id,
+            'quantidade_solicitada' => 5,
+            'quantidade_liberada' => 5,
+            'lote' => 'LOTE-TESTE-SEM-DEV'
+        ]);
+
+        $resShowSemDev = $this->actingAs($this->user)->getJson("/api/movimentacao/{$movSemDev->id}");
+        $resShowSemDev->assertStatus(200);
+        $itemSemDevPayload = $resShowSemDev->json('data.itens.0');
+        $this->assertEquals(0, $itemSemDevPayload['quantidade_devolvida']);
+        $this->assertEquals('LOTE-TESTE-SEM-DEV', $itemSemDevPayload['numero_lote']);
+    }
 }
