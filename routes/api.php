@@ -121,14 +121,18 @@ Route::middleware('auth:sanctum')->group(function () {
     // --------------------------------------------------------
     Route::post('/produtos',                [ProdutoController::class, 'add']);
     Route::post('/produtos/add',            [ProdutoController::class, 'add']);
+    Route::post('/produtos/store',          [ProdutoController::class, 'store']);
     Route::post('/produtos/update',         [ProdutoController::class, 'update']);
     Route::match(['post', 'delete'], '/produtos/delete/{id}', [ProdutoController::class, 'delete']);
+    Route::delete('/produtos/{id}',         [ProdutoController::class, 'destroy']);
     Route::post('/produtos/toggleStatus',   [ProdutoController::class, 'toggleStatus']);
 
     // --------------------------------------------------------
     // Entradas de NF — todas as rotas protegidas
     // --------------------------------------------------------
+    Route::post('/entrada',        [EntradaController::class, 'store']);
     Route::post('/entrada/add',    [EntradaController::class, 'add']);
+    Route::post('/entrada/store',  [EntradaController::class, 'store']);
     Route::post('/entrada/update', [EntradaController::class, 'update']);
     Route::post('/entrada/delete', [EntradaController::class, 'delete']);
 

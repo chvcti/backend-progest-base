@@ -123,32 +123,36 @@ class PermissoesProdutosEntradaTest extends TestCase
                 'status' => 'A'
             ]
         ]);
-        // Alterado de acordo com a trava feita que agora retorna 403
-        $response->assertStatus(403);
+        $response->assertStatus(403)
+                 ->assertJson(['message' => 'Acesso negado. Apenas administradores podem cadastrar ou alterar produtos.']);
     }
 
-    public function test_almoxarife_can_register_entrada()
+    public function test_almoxarife_cannot_register_entrada()
     {
         Sanctum::actingAs($this->almoxarife, ['*']);
 
-        // Teste de permissão de acesso ao endpoint de entrada
+        // Almoxarife deve ser bloqueado com 403
         $response = $this->postJson('/api/entrada/add', [
-            'unidade_id' => $this->caf->id,
-            'data_entrada' => '2023-10-10',
-            'origem' => 'Fornecedor',
-            'numero_nota' => '123',
-            'itens' => [
-                [
-                    'produto_id' => $this->produto->id,
-                    'quantidade' => 10,
-                    'lote' => 'LOTE1',
-                    'validade' => '2025-10-10'
-                ]
-            ]
+            'setor_id' => $this->caf->id,
+            'nota_fiscal' => '123',
+            'itens' => []
         ]);
         
-        // Se a validação passar, o teste está garantindo que não deu erro de autorização.
-        // O código de retorno vai depender se faltam outros dados no mock, mas não deve ser 403.
+        $response->assertStatus(403)
+                 ->assertJson(['message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.']);
+    }
+
+    public function test_admin_setor_caf_can_attempt_register_entrada()
+    {
+        Sanctum::actingAs($this->adminSetor, ['*']);
+
+        $response = $this->postJson('/api/entrada/add', [
+            'setor_id' => $this->caf->id,
+            'nota_fiscal' => '123',
+            'itens' => []
+        ]);
+        
+        // Admin não deve receber 403 (vai receber 422 de validação pelos campos vazios)
         $this->assertNotEquals(403, $response->status());
     }
 

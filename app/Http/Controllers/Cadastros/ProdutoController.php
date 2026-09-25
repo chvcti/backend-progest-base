@@ -171,25 +171,18 @@ class ProdutoController
     /**
      * Criar novo produto
      */
+    /**
+     * Criar novo produto
+     */
     public function add(ProdutoRequest $request)
     {
         try {
             $user = auth()->user();
-            if (!$user->isSuperAdmin()) {
-                $hasCAFAccess = \Illuminate\Support\Facades\DB::table('usuario_setor')
-                    ->join('setores', 'usuario_setor.setor_id', '=', 'setores.id')
-                    ->leftJoin('setor_distribuidor', 'setores.id', '=', 'setor_distribuidor.setor_solicitante_id')
-                    ->where('usuario_setor.usuario_id', $user->id)
-                    ->where('usuario_setor.perfil', 'admin')
-                    ->whereNull('setor_distribuidor.id')
-                    ->exists();
-
-                if (!$hasCAFAccess) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'Criação de produtos permitida apenas para administradores da CAF.'
-                    ], 403);
-                }
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem cadastrar ou alterar produtos.'
+                ], 403);
             }
 
             $data = $request->validated()['produto'];
@@ -214,6 +207,11 @@ class ProdutoController
         }
     }
 
+    public function store(ProdutoRequest $request)
+    {
+        return $this->add($request);
+    }
+
     /**
      * Atualizar produto existente
      */
@@ -221,21 +219,11 @@ class ProdutoController
     {
         try {
             $user = auth()->user();
-            if (!$user->isSuperAdmin()) {
-                $hasCAFAccess = \Illuminate\Support\Facades\DB::table('usuario_setor')
-                    ->join('setores', 'usuario_setor.setor_id', '=', 'setores.id')
-                    ->leftJoin('setor_distribuidor', 'setores.id', '=', 'setor_distribuidor.setor_solicitante_id')
-                    ->where('usuario_setor.usuario_id', $user->id)
-                    ->where('usuario_setor.perfil', 'admin')
-                    ->whereNull('setor_distribuidor.id')
-                    ->exists();
-
-                if (!$hasCAFAccess) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'A edição de produtos é permitida apenas para administradores da CAF.'
-                    ], 403);
-                }
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem cadastrar ou alterar produtos.'
+                ], 403);
             }
 
             $data = $request->validated()['produto'];
@@ -269,21 +257,11 @@ class ProdutoController
     {
         try {
             $user = auth()->user();
-            if (!$user->isSuperAdmin()) {
-                $hasCAFAccess = \Illuminate\Support\Facades\DB::table('usuario_setor')
-                    ->join('setores', 'usuario_setor.setor_id', '=', 'setores.id')
-                    ->leftJoin('setor_distribuidor', 'setores.id', '=', 'setor_distribuidor.setor_solicitante_id')
-                    ->where('usuario_setor.usuario_id', $user->id)
-                    ->where('usuario_setor.perfil', 'admin')
-                    ->whereNull('setor_distribuidor.id')
-                    ->exists();
-
-                if (!$hasCAFAccess) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'A exclusão de produtos é permitida apenas para administradores da CAF.'
-                    ], 403);
-                }
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem cadastrar ou alterar produtos.'
+                ], 403);
             }
 
             $produto = Produto::find($id);
@@ -315,12 +293,25 @@ class ProdutoController
         }
     }
 
+    public function destroy($id)
+    {
+        return $this->delete($id);
+    }
+
     /**
      * Alterar status do produto (ativar/inativar)
      */
     public function toggleStatus(Request $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem cadastrar ou alterar produtos.'
+                ], 403);
+            }
+
             $id = $request->input('id');
 
             if (!$id) return response()->json(['status' => false, 'message' => 'ID do produto é obrigatório'], 400);

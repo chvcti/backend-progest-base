@@ -35,26 +35,12 @@ class EntradaController extends Controller
      */
     public function add(Request $request)
     {
-        try {
-            $user = auth()->user();
-            if (!$user->isSuperAdmin()) {
-                $hasCAFAccess = DB::table('usuario_setor')
-                    ->join('setores', 'usuario_setor.setor_id', '=', 'setores.id')
-                    ->leftJoin('setor_distribuidor', 'setores.id', '=', 'setor_distribuidor.setor_solicitante_id')
-                    ->where('usuario_setor.usuario_id', $user->id)
-                    ->whereIn('usuario_setor.perfil', ['admin', 'almoxarife'])
-                    ->whereNull('setor_distribuidor.id')
-                    ->exists();
-
-                if (!$hasCAFAccess) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'O lançamento de notas fiscais é permitido apenas para a Central de Abastecimento (CAF).'
-                    ], 403);
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::error('Erro ao verificar permissões: ' . $e->getMessage());
+        $user = auth()->user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.'
+            ], 403);
         }
 
         $data = $request->all();
@@ -217,6 +203,11 @@ class EntradaController extends Controller
         }
     }
 
+    public function store(Request $request)
+    {
+        return $this->add($request);
+    }
+
     /**
      * Listar entradas com seus itens e detalhes dos produtos
      */
@@ -307,6 +298,14 @@ class EntradaController extends Controller
      */
     public function update(Request $request)
     {
+        $user = auth()->user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.'
+            ], 403);
+        }
+
         $data = $request->all();
 
         $validator = Validator::make($data, [
@@ -474,6 +473,14 @@ class EntradaController extends Controller
      */
     public function delete(Request $request)
     {
+        $user = auth()->user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.'
+            ], 403);
+        }
+
         $data = $request->all();
 
         $validator = Validator::make($data, [

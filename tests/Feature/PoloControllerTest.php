@@ -13,7 +13,8 @@ class PoloControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $admin = \App\Models\User::factory()->create();
+        $admin = \App\Models\User::where('email', 'adminti@gmail.com')->first() 
+            ?? \App\Models\User::factory()->create(['email' => 'adminti@gmail.com']);
         \Laravel\Sanctum\Sanctum::actingAs($admin);
     }
 

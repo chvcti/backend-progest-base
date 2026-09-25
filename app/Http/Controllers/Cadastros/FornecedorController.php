@@ -15,6 +15,14 @@ class FornecedorController
     public function add(FornecedorRequest $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar fornecedores.'
+                ], 403);
+            }
+
             $data = $request->validated()['fornecedor'] ?? $request->all()['fornecedor'];
 
             // Criar fornecedor
@@ -148,6 +156,14 @@ class FornecedorController
     public function update(FornecedorRequest $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar fornecedores.'
+                ], 403);
+            }
+
             $data = $request->validated()['fornecedor'] ?? $request->all()['fornecedor'];
             $id = $data['id'] ?? null;
 
@@ -190,6 +206,14 @@ class FornecedorController
     public function delete($id)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar fornecedores.'
+                ], 403);
+            }
+
             $fornecedor = Fornecedor::find($id);
             if (!$fornecedor) {
                 return response()->json(['status' => false, 'message' => 'Fornecedor não encontrado'], 404);
@@ -217,6 +241,14 @@ class FornecedorController
     public function toggleStatus(Request $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar fornecedores.'
+                ], 403);
+            }
+
             $data = $request->all();
             $id = $data['id'] ?? null;
 

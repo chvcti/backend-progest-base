@@ -15,6 +15,14 @@ class PoloController
     public function add(PoloRequest $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar polos.'
+                ], 403);
+            }
+
             $data = $request->validated();
 
             $polo = Polo::create([
@@ -139,6 +147,14 @@ class PoloController
     public function update(PoloRequest $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar polos.'
+                ], 403);
+            }
+
             $data = $request->validated();
 
             $polo = Polo::find($data['id']);
@@ -176,6 +192,14 @@ class PoloController
     public function delete(Request $request, $id)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar polos.'
+                ], 403);
+            }
+
             $polo = Polo::find($id);
 
             if (!$polo) {
@@ -216,6 +240,14 @@ class PoloController
     public function toggleStatus(Request $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem gerenciar polos.'
+                ], 403);
+            }
+
             $id = $request->input('id');
 
             if (!$id) {

@@ -49,7 +49,8 @@ class User extends Authenticatable
     protected $appends = [
         'is_super_admin',
         'is_admin_caf',
-        'is_admin_polo'
+        'is_admin_polo',
+        'is_admin'
     ];
 
     /**
@@ -172,5 +173,38 @@ class User extends Authenticatable
         // Retorna true se for super admin, admin da caf ou admin de pelo menos um polo
         if ($this->isSuperAdmin() || $this->isAdminCaf()) return true;
         return $this->polosAdministrados()->exists();
+    }
+
+    public function isAdmin(): bool
+    {
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        if (isset($this->role) && mb_strtolower($this->role) === 'admin') {
+            return true;
+        }
+
+        if (isset($this->usuario_tipo) && mb_strtolower($this->usuario_tipo) === 'admin') {
+            return true;
+        }
+
+        if ($this->isAdminCaf()) {
+            return true;
+        }
+
+        if ($this->polosAdministrados()->exists()) {
+            return true;
+        }
+
+        return \Illuminate\Support\Facades\DB::table('usuario_setor')
+            ->where('usuario_id', $this->id)
+            ->where('perfil', 'admin')
+            ->exists();
+    }
+
+    public function getIsAdminAttribute(): bool
+    {
+        return $this->isAdmin();
     }
 }
