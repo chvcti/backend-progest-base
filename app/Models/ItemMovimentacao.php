@@ -8,7 +8,7 @@ class ItemMovimentacao extends Model
 {
     protected $table = 'item_movimentacao';
     protected $fillable = ['movimentacao_id', 'produto_id', 'quantidade_solicitada', 'quantidade_liberada', 'quantidade_devolvendo', 'lote'];
-    protected $appends = ['codigo_simpass', 'codigo_simpas', 'data_formatada', 'lotes_parsed', 'numero_lote', 'validade', 'quantidade_devolvida'];
+    protected $appends = ['codigo_simpass', 'codigo_simpas', 'data_formatada', 'lotes_parsed', 'numero_lote', 'validade', 'quantidade_devolvida', 'quantidade_original_atendida', 'quantidade_liberada_original', 'quantidade_aprovada_original'];
 
     public function getCodigoSimpassAttribute()
     {
@@ -98,19 +98,34 @@ class ItemMovimentacao extends Model
             return 0;
         }
 
+        $totalTabela = 0;
         if ($this->relationLoaded('devolucoes')) {
-            return (float) $this->devolucoes->sum('quantidade');
+            $totalTabela = (float) $this->devolucoes->sum('quantidade');
+        } elseif ($this->relationLoaded('movimentacao') && $this->movimentacao && $this->movimentacao->relationLoaded('devolucoes')) {
+            $totalTabela = (float) $this->movimentacao->devolucoes->where('item_movimentacao_id', $this->id)->sum('quantidade');
+        } elseif ($this->id) {
+            $totalTabela = (float) Devolucao::where('item_movimentacao_id', $this->id)->sum('quantidade');
         }
 
-        if ($this->relationLoaded('movimentacao') && $this->movimentacao && $this->movimentacao->relationLoaded('devolucoes')) {
-            return (float) $this->movimentacao->devolucoes->where('item_movimentacao_id', $this->id)->sum('quantidade');
+        $totalMov = 0;
+        $movOrigemId = $this->movimentacao_id;
+        if ($movOrigemId && $this->produto_id) {
+            $movDevs = Movimentacao::where('tipo', 'D')
+                ->where('status_solicitacao', 'A')
+                ->where(function ($q) use ($movOrigemId) {
+                    $q->where('observacao', 'like', '%pedido #' . $movOrigemId . '%')
+                      ->orWhere('observacao', 'like', '%pedido ' . $movOrigemId . '%');
+                })
+                ->pluck('id');
+
+            if ($movDevs->isNotEmpty()) {
+                $totalMov = (float) self::whereIn('movimentacao_id', $movDevs)
+                    ->where('produto_id', $this->produto_id)
+                    ->sum(\Illuminate\Support\Facades\DB::raw('CASE WHEN quantidade_liberada > 0 THEN quantidade_liberada ELSE quantidade_devolvendo END'));
+            }
         }
 
-        if ($this->id) {
-            return (float) Devolucao::where('item_movimentacao_id', $this->id)->sum('quantidade');
-        }
-
-        return 0;
+        return max($totalTabela, $totalMov);
     }
 
     public function movimentacao()
@@ -129,5 +144,36 @@ class ItemMovimentacao extends Model
     public function devolucoes()
     {
         return $this->hasMany(Devolucao::class);
+    }
+
+    public function getQuantidadeOriginalAtendidaAttribute()
+    {
+        if (isset($this->attributes['quantidade_original_atendida'])) {
+            return (float) $this->attributes['quantidade_original_atendida'];
+        }
+
+        $mov = $this->relationLoaded('movimentacao') ? $this->movimentacao : $this->movimentacao()->first();
+        if ($mov && $mov->tipo === 'D') {
+            $origId = $mov->pedido_origem_id;
+            if ($origId && $this->produto_id) {
+                $itemOrig = self::where('movimentacao_id', $origId)
+                    ->where('produto_id', $this->produto_id)
+                    ->first();
+                if ($itemOrig) {
+                    return (float) $itemOrig->quantidade_liberada;
+                }
+            }
+        }
+        return null;
+    }
+
+    public function getQuantidadeLiberadaOriginalAttribute()
+    {
+        return $this->getQuantidadeOriginalAtendidaAttribute();
+    }
+
+    public function getQuantidadeAprovadaOriginalAttribute()
+    {
+        return $this->getQuantidadeOriginalAtendidaAttribute();
     }
 }

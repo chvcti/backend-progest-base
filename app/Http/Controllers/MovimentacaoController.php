@@ -318,6 +318,26 @@ class MovimentacaoController extends Controller
                 return $m;
             });
 
+        // Batch pre-carregar quantidade liberada original para movimentações de devolução
+        $devolucoes = $movs->where('tipo', 'D');
+        $pedidosOrigemIds = $devolucoes->map(function ($d) {
+            return $d->pedido_origem_id;
+        })->filter()->unique();
+
+        if ($pedidosOrigemIds->isNotEmpty()) {
+            $itensOriginais = ItemMovimentacao::whereIn('movimentacao_id', $pedidosOrigemIds)->get();
+            foreach ($devolucoes as $devMov) {
+                if (!$devMov->pedido_origem_id || !$devMov->relationLoaded('itens')) continue;
+                $itensDoPedido = $itensOriginais->where('movimentacao_id', $devMov->pedido_origem_id);
+                foreach ($devMov->itens as $item) {
+                    $orig = $itensDoPedido->where('produto_id', $item->produto_id)->first();
+                    $qtdLib = $orig ? (float) $orig->quantidade_liberada : 0;
+                    $item->quantidade_liberada_original = $qtdLib;
+                    $item->quantidade_aprovada_original = $qtdLib;
+                }
+            }
+        }
+
         return response()->json([
             'status' => true,
             'data' => $movs
@@ -367,6 +387,16 @@ class MovimentacaoController extends Controller
                 $item->lotes_parsed = is_array($decoded) ? $decoded : [['lote' => $raw, 'qtd' => null, 'data_vencimento' => null]];
             } else {
                 $item->lotes_parsed = [];
+            }
+        }
+
+        if ($mov->tipo === 'D' && $mov->pedido_origem_id && $mov->relationLoaded('itens')) {
+            $itensOriginais = ItemMovimentacao::where('movimentacao_id', $mov->pedido_origem_id)->get();
+            foreach ($mov->itens as $item) {
+                $orig = $itensOriginais->where('produto_id', $item->produto_id)->first();
+                $qtdLib = $orig ? (float) $orig->quantidade_liberada : 0;
+                $item->quantidade_liberada_original = $qtdLib;
+                $item->quantidade_aprovada_original = $qtdLib;
             }
         }
 
@@ -462,10 +492,10 @@ class MovimentacaoController extends Controller
                 $quantidadesLiberadas = [];
                 if (!empty($itens) && is_array($itens)) {
                     foreach ($itens as $itemData) {
-                        if (isset($itemData['quantidade_liberada']) && (float) $itemData['quantidade_liberada'] <= 0) {
+                        if (isset($itemData['quantidade_liberada']) && (float) $itemData['quantidade_liberada'] < 0) {
                             throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
                                 'status' => false,
-                                'message' => 'A quantidade aprovada deve ser estritamente maior que zero.'
+                                'message' => 'A quantidade aprovada não pode ser negativa.'
                             ], 422));
                         }
                         if (isset($itemData['id']) && isset($itemData['quantidade_liberada'])) {
@@ -485,6 +515,26 @@ class MovimentacaoController extends Controller
                 $setorOrigem = \App\Models\Setores::find($mov->setor_origem_id);
                 $origemControlaEstoque = $setorOrigem && (bool) $setorOrigem->estoque;
 
+                // Validar se pelo menos um item da solicitação tem quantidade a liberar > 0
+                $algumItemComQuantidade = false;
+                foreach ($mov->itens as $item) {
+                    $qtdPedida = $isDevolucao
+                        ? (((float) ($item->quantidade_devolvendo ?? 0) > 0) ? (float) $item->quantidade_devolvendo : (float) $item->quantidade_solicitada)
+                        : (float) $item->quantidade_solicitada;
+                    $qtdLiberar = $quantidadesLiberadas[$item->id] ?? $qtdPedida;
+                    if ($qtdLiberar > 0) {
+                        $algumItemComQuantidade = true;
+                        break;
+                    }
+                }
+
+                if (!$algumItemComQuantidade) {
+                    throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
+                        'status' => false,
+                        'message' => 'Não é possível aprovar uma movimentação com todos os itens zerados. Rejeite a solicitação se não houver atendimento.'
+                    ], 422));
+                }
+
                 // Validar estoque da origem antes de aprovar
                 $errosEstoque = [];
                 foreach ($mov->itens as $item) {
@@ -493,17 +543,23 @@ class MovimentacaoController extends Controller
                         : (float) $item->quantidade_solicitada;
                     $qtdLiberar = $quantidadesLiberadas[$item->id] ?? $qtdPedida;
 
-                    if ($qtdLiberar <= 0) {
-                        if ($isDevolucao) continue; // Itens não devolvidos são ignorados
-                        
+                    // TRAVA 1 — Teto de Solicitação: impede aprovar mais do que foi pedido
+                    if ($qtdLiberar > $qtdPedida) {
+                        $nomeProduto = $item->produto?->nome ?? "ID {$item->produto_id}";
                         throw new \Illuminate\Http\Exceptions\HttpResponseException(response()->json([
                             'status' => false,
-                            'message' => 'A quantidade aprovada deve ser estritamente maior que zero.'
+                            'message' => "A quantidade aprovada ({$qtdLiberar}) não pode ser maior do que a quantidade solicitada ({$qtdPedida}) para o item {$nomeProduto}."
                         ], 422));
+                    }
+
+                    // Se a quantidade for <= 0, não consome estoque e não valida saldo
+                    if ($qtdLiberar <= 0) {
+                        continue;
                     }
 
                     // Se for devolução de um setor SEM controle de estoque físico (enfermarias, clínicas),
                     // não há estoque armazenado na origem para debitar; segue direto para recebimento no destino.
+                    // Obs.: o Teto de Solicitação (Trava 1) acima permanece obrigatório mesmo neste caso.
                     if ($isDevolucao && !$origemControlaEstoque) {
                         continue;
                     }
@@ -557,13 +613,29 @@ class MovimentacaoController extends Controller
                         ? (((float) ($item->quantidade_devolvendo ?? 0) > 0) ? (float) $item->quantidade_devolvendo : (float) $item->quantidade_solicitada)
                         : (float) $item->quantidade_solicitada;
                     $qtdLiberar = $quantidadesLiberadas[$item->id] ?? $qtdPedida;
-                    
-                    if ($isDevolucao) {
-                        $item->quantidade_devolvendo = $qtdLiberar;
-                    } else {
-                        $item->quantidade_liberada = $qtdLiberar;
-                    }
+
+                    // Defesa extra: nunca gravar acima do teto de solicitação (camada dupla)
+                    $qtdLiberar = min($qtdLiberar, $qtdPedida);
+
+                    // Gravar quantidade aceita exclusivamente em quantidade_liberada,
+                    // preservando quantidade_solicitada e quantidade_devolvendo originais
+                    $item->quantidade_liberada = $qtdLiberar;
                     $item->save();
+
+                    if ($isDevolucao && $mov->pedido_origem_id && $qtdLiberar > 0) {
+                        $itemOrig = ItemMovimentacao::where('movimentacao_id', $mov->pedido_origem_id)
+                            ->where('produto_id', $item->produto_id)
+                            ->first();
+                        if ($itemOrig) {
+                            \App\Models\Devolucao::firstOrCreate([
+                                'movimentacao_id' => $mov->pedido_origem_id,
+                                'item_movimentacao_id' => $itemOrig->id,
+                                'lote' => $item->lote,
+                                'quantidade' => $qtdLiberar,
+                                'usuario_id' => $mov->usuario_id
+                            ]);
+                        }
+                    }
 
                     if ($qtdLiberar <= 0) continue;
 
@@ -1378,6 +1450,46 @@ class MovimentacaoController extends Controller
             DB::beginTransaction();
 
             $userId = auth()->id() ?: ($movimentacaoOriginal->usuario_id ?? null);
+            $motivo = $request->input('motivo');
+            $obs = 'Devolução originada do pedido #' . $movimentacaoOriginal->id . ($motivo ? ' - ' . $motivo : '');
+
+            // 1. Validar teto de devolução para cada item antes de registrar
+            foreach ($itensParaDevolver as $reqItem) {
+                $itemOriginal = $movimentacaoOriginal->itens->where('id', $reqItem['item_movimentacao_id'])->first();
+                if (!$itemOriginal) continue;
+
+                $qtdDevolvendo = (int) $reqItem['quantidade_devolvendo'];
+
+                // Total já devolvido registrado na tabela 'devolucoes'
+                $jaDevolvidoTabela = (float) \App\Models\Devolucao::where('item_movimentacao_id', $itemOriginal->id)->sum('quantidade');
+
+                // Total já devolvido em movimentações tipo 'D' anteriores (aprovadas ou pendentes)
+                $movDevolucoesIds = \App\Models\Movimentacao::where('tipo', 'D')
+                    ->whereIn('status_solicitacao', ['A', 'P'])
+                    ->where(function ($q) use ($movimentacaoOriginal) {
+                        $q->where('observacao', 'like', '%pedido #' . $movimentacaoOriginal->id . '%')
+                          ->orWhere('observacao', 'like', '%pedido ' . $movimentacaoOriginal->id . '%');
+                    })
+                    ->pluck('id');
+
+                $jaDevolvidoMov = 0;
+                if ($movDevolucoesIds->isNotEmpty()) {
+                    $jaDevolvidoMov = (float) \App\Models\ItemMovimentacao::whereIn('movimentacao_id', $movDevolucoesIds)
+                        ->where('produto_id', $itemOriginal->produto_id)
+                        ->sum(\Illuminate\Support\Facades\DB::raw('CASE WHEN quantidade_devolvendo > 0 THEN quantidade_devolvendo ELSE quantidade_liberada END'));
+                }
+
+                $totalJaDevolvido = max($jaDevolvidoTabela, $jaDevolvidoMov);
+                $saldoDisponivel = max(0, (float) $itemOriginal->quantidade_liberada - $totalJaDevolvido);
+
+                if ($qtdDevolvendo > $saldoDisponivel) {
+                    DB::rollBack();
+                    return response()->json([
+                        'status' => false,
+                        'message' => "A quantidade devolvida ({$qtdDevolvendo}) não pode superar o saldo atendido disponível ({$saldoDisponivel})."
+                    ], 422);
+                }
+            }
 
             // A devolução inverte a origem e destino
             $mov = Movimentacao::create([
@@ -1386,7 +1498,7 @@ class MovimentacaoController extends Controller
                 'setor_destino_id' => $movimentacaoOriginal->setor_origem_id,
                 'tipo' => 'D',
                 'data_hora' => now(),
-                'observacao' => $request->input('motivo') ?? 'Devolução originada do pedido #' . $movimentacaoOriginal->id,
+                'observacao' => $obs,
                 'status_solicitacao' => 'P',
                 'aprovador_usuario_id' => null,
             ]);
@@ -1397,20 +1509,11 @@ class MovimentacaoController extends Controller
 
                 $qtdDevolvendo = (int) $reqItem['quantidade_devolvendo'];
 
-                // Valida se a quantidade a devolver não é maior do que a liberada na original
-                if ($qtdDevolvendo > $itemOriginal->quantidade_liberada) {
-                    DB::rollBack();
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'A quantidade devolvida excede a quantidade liberada original para um dos itens.'
-                    ], 422);
-                }
-
                 \App\Models\ItemMovimentacao::create([
                     'movimentacao_id' => $mov->id,
                     'produto_id' => $itemOriginal->produto_id,
-                    'quantidade_solicitada' => (int) $itemOriginal->quantidade_solicitada,
-                    'quantidade_liberada' => (int) $itemOriginal->quantidade_liberada,
+                    'quantidade_solicitada' => $qtdDevolvendo,
+                    'quantidade_liberada' => 0,
                     'quantidade_devolvendo' => $qtdDevolvendo,
                     'lote' => $itemOriginal->lote,
                 ]);
