@@ -52,6 +52,6 @@ class AuthControllerTest extends TestCase
         $response = $this->postJson('/api/logout');
 
         $response->assertStatus(200)
-                 ->assertJson(['message' => 'Logout realizado com sucesso!']);
+                 ->assertJson(['message' => 'Sessão encerrada com sucesso']);
     }
 }
