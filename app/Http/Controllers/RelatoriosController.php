@@ -169,6 +169,80 @@ class RelatoriosController extends Controller
     }
 
     /**
+     * Extrai um array de códigos de lotes a partir de uma string ou estrutura bruta de lote.
+     * Suporta string simples, string JSON serializada ou objeto/array.
+     *
+     * @param mixed $loteRaw
+     * @return array
+     */
+    private function extrairCodigosLote($loteRaw): array
+    {
+        if (empty($loteRaw)) {
+            return [];
+        }
+
+        if (is_array($loteRaw)) {
+            $codigos = [];
+            foreach ($loteRaw as $entry) {
+                if (is_array($entry)) {
+                    $cod = $entry['lote'] ?? $entry['numero_lote'] ?? null;
+                    if ($cod) $codigos[] = trim((string)$cod);
+                } elseif (is_object($entry)) {
+                    $cod = $entry->lote ?? $entry->numero_lote ?? null;
+                    if ($cod) $codigos[] = trim((string)$cod);
+                } elseif (is_string($entry) || is_numeric($entry)) {
+                    $codigos[] = trim((string)$entry);
+                }
+            }
+            return array_values(array_unique(array_filter($codigos)));
+        }
+
+        $str = trim((string)$loteRaw);
+        if ($str === '' || $str === '-' || strtolower($str) === 'null') {
+            return [];
+        }
+
+        // Se for JSON serializado
+        if (str_starts_with($str, '[') || str_starts_with($str, '{')) {
+            $decoded = json_decode($str, true);
+            if (json_last_error() === JSON_ERROR_NONE && !empty($decoded)) {
+                return $this->extrairCodigosLote($decoded);
+            }
+        }
+
+        // Remover prefixos como "Lote: " e sufixos como "(Validade: ...)"
+        $limpo = preg_replace('/\s*\([Vv]alidade:?[^)]*\)/i', '', $str);
+        $limpo = preg_replace('/^[Ll]ote:\s*/i', '', $limpo);
+
+        // Se houver vírgula separando vários lotes
+        $partes = explode(',', $limpo);
+        $codigos = [];
+        foreach ($partes as $p) {
+            $p = trim($p);
+            if ($p !== '' && $p !== '-') {
+                $codigos[] = $p;
+            }
+        }
+
+        return array_values(array_unique($codigos));
+    }
+
+    /**
+     * Sanitiza a exibição de lote para formato legível (apenas códigos separados por vírgula).
+     *
+     * @param mixed $loteRaw
+     * @return string
+     */
+    private function sanitizarLoteExibicao($loteRaw): string
+    {
+        $codigos = $this->extrairCodigosLote($loteRaw);
+        if (empty($codigos)) {
+            return '-';
+        }
+        return implode(', ', $codigos);
+    }
+
+    /**
      * Relatório de Movimentações
      * POST /api/relatorios/movimentacoes/list
      * 
@@ -290,7 +364,7 @@ class RelatoriosController extends Controller
             // Buscar todos os resultados
             $results = $query->get();
 
-            // BATCH LOADING DE LOTES (Eliminando N+1)
+            // BATCH LOADING DE LOTES (Eliminando N+1 e decodificando lotes)
             $produtosIds = [];
             $lotes = [];
             $setoresIds = [];
@@ -298,10 +372,18 @@ class RelatoriosController extends Controller
             foreach ($results as $mov) {
                 if ($mov->setor_destino_id) {
                     $setoresIds[] = $mov->setor_destino_id;
-                    foreach ($mov->itens as $item) {
-                        if ($item->lote) {
+                }
+                if ($mov->setor_origem_id) {
+                    $setoresIds[] = $mov->setor_origem_id;
+                }
+                foreach ($mov->itens as $item) {
+                    if ($item->lote) {
+                        $codigos = $this->extrairCodigosLote($item->lote);
+                        if (!empty($codigos)) {
                             $produtosIds[] = $item->produto_id;
-                            $lotes[] = $item->lote;
+                            foreach ($codigos as $cod) {
+                                $lotes[] = $cod;
+                            }
                         }
                     }
                 }
@@ -317,29 +399,43 @@ class RelatoriosController extends Controller
                     ->whereIn('lote', $lotes)
                     ->whereIn('setor_id', $setoresIds)
                     ->get(['produto_id', 'lote', 'setor_id', 'data_fabricacao', 'data_vencimento'])
-                    ->keyBy(function($item) {
-                        return $item->produto_id . '-' . $item->lote . '-' . $item->setor_id;
+                    ->groupBy(function($item) {
+                        return $item->produto_id . '-' . $item->lote;
                     });
             }
 
             // Enriquecer os itens com informações de lote (data_fabricacao e data_vencimento)
+            // e higienizar a string de lote
             $results->each(function ($movimentacao) use ($lotesPreloaded) {
                 $movimentacao->itens->each(function ($item) use ($movimentacao, $lotesPreloaded) {
-                    if ($item->lote && $movimentacao->setor_destino_id) {
-                        $key = $item->produto_id . '-' . $item->lote . '-' . $movimentacao->setor_destino_id;
-                        $loteInfo = $lotesPreloaded->get($key);
-                        
-                        if ($loteInfo) {
-                            $item->data_fabricacao = $loteInfo->data_fabricacao;
-                            $item->data_vencimento = $loteInfo->data_vencimento;
-                        } else {
-                            $item->data_fabricacao = null;
-                            $item->data_vencimento = null;
+                    $codigos = $this->extrairCodigosLote($item->lote);
+                    $item->lote = !empty($codigos) ? implode(', ', $codigos) : ($item->lote ? $this->sanitizarLoteExibicao($item->lote) : '-');
+
+                    $validades = [];
+                    $fabricacoes = [];
+                    
+                    if (!empty($codigos)) {
+                        foreach ($codigos as $cod) {
+                            $key = $item->produto_id . '-' . $cod;
+                            $matches = $lotesPreloaded->get($key);
+                            if ($matches && $matches->isNotEmpty()) {
+                                $match = $matches->firstWhere('setor_id', $movimentacao->setor_destino_id)
+                                      ?? $matches->firstWhere('setor_id', $movimentacao->setor_origem_id)
+                                      ?? $matches->first();
+                                if ($match) {
+                                    if ($match->data_vencimento) {
+                                        $validades[] = date('d/m/Y', strtotime($match->data_vencimento));
+                                    }
+                                    if ($match->data_fabricacao) {
+                                        $fabricacoes[] = date('d/m/Y', strtotime($match->data_fabricacao));
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        $item->data_fabricacao = null;
-                        $item->data_vencimento = null;
                     }
+
+                    $item->data_vencimento = !empty($validades) ? implode(', ', array_unique($validades)) : null;
+                    $item->data_fabricacao = !empty($fabricacoes) ? implode(', ', array_unique($fabricacoes)) : null;
                 });
             });
 
@@ -382,6 +478,7 @@ class RelatoriosController extends Controller
                 'filters.date_to' => 'nullable|date|after_or_equal:filters.date_from',
                 'filters.polo_id' => 'nullable|exists:polos,id',
                 'filters.setor_id' => 'nullable|exists:setores,id',
+                'filters.tipo' => 'nullable|string|in:S,T',
                 'filters.setor_origem_id' => 'nullable|exists:setores,id',
                 'filters.produto_id' => 'nullable|exists:produtos,id',
                 'filters.status' => 'nullable|string|in:A,R,P,C,X',
@@ -389,6 +486,7 @@ class RelatoriosController extends Controller
                 'filters.date_to.after_or_equal' => 'A data final deve ser posterior ou igual à data inicial.',
                 'filters.polo_id.exists' => 'Polo não encontrado.',
                 'filters.setor_id.exists' => 'Setor não encontrado.',
+                'filters.tipo.in' => 'Tipo inválido. Use: S (Saída) ou T (Transferência).',
                 'filters.setor_origem_id.exists' => 'Setor de origem não encontrado.',
                 'filters.produto_id.exists' => 'Produto não encontrado.',
                 'filters.status.in' => 'Status inválido. Use: A (Aprovado), R (Reprovado), P (Pendente), C (Rascunho), X (Cancelado).',
@@ -402,8 +500,11 @@ class RelatoriosController extends Controller
                 ], 422);
             }
 
+            // Aplicar filtros se fornecidos
+            $filters = $data['filters'] ?? [];
+
             // Query base com eager loading para evitar N+1
-            // Filtra apenas movimentações do tipo 'S' (Saída)
+            // Contempla saídas operacionais ('S') e transferências setoriais ('T')
             $query = Movimentacao::with([
                 'setorOrigem:id,nome,tipo,polo_id',
                 'setorOrigem.polo:id,nome',
@@ -414,7 +515,13 @@ class RelatoriosController extends Controller
                 'itens.produto:id,nome,codigo_simpas,codigo_barras,grupo_produto_id,unidade_medida_id',
                 'itens.produto.unidadeMedida:id,nome',
                 'itens.produto.grupoProduto:id,nome,tipo'
-            ])->where('tipo', 'S');
+            ]);
+
+            if (!empty($filters['tipo'])) {
+                $query->where('tipo', $filters['tipo']);
+            } else {
+                $query->whereIn('tipo', ['S', 'T']);
+            }
 
             // Restringir aos setores que o usuário autenticado tem acesso.
             // Super admin enxerga todos os setores (sem restrição).
@@ -428,9 +535,6 @@ class RelatoriosController extends Controller
                       ->orWhereIn('setor_destino_id', $setoresPermitidos);
                 });
             }
-
-            // Aplicar filtros se fornecidos
-            $filters = $data['filters'] ?? [];
 
             if (!empty($filters['date_from'])) {
                 $query->whereDate('data_hora', '>=', $filters['date_from']);
@@ -480,7 +584,7 @@ class RelatoriosController extends Controller
             // Buscar todos os resultados
             $results = $query->get();
 
-            // BATCH LOADING DE LOTES (Eliminando N+1)
+            // BATCH LOADING DE LOTES (Eliminando N+1 e decodificando lotes)
             $produtosIds = [];
             $lotes = [];
             $setoresIds = [];
@@ -488,10 +592,18 @@ class RelatoriosController extends Controller
             foreach ($results as $mov) {
                 if ($mov->setor_destino_id) {
                     $setoresIds[] = $mov->setor_destino_id;
-                    foreach ($mov->itens as $item) {
-                        if ($item->lote) {
+                }
+                if ($mov->setor_origem_id) {
+                    $setoresIds[] = $mov->setor_origem_id;
+                }
+                foreach ($mov->itens as $item) {
+                    if ($item->lote) {
+                        $codigos = $this->extrairCodigosLote($item->lote);
+                        if (!empty($codigos)) {
                             $produtosIds[] = $item->produto_id;
-                            $lotes[] = $item->lote;
+                            foreach ($codigos as $cod) {
+                                $lotes[] = $cod;
+                            }
                         }
                     }
                 }
@@ -507,29 +619,43 @@ class RelatoriosController extends Controller
                     ->whereIn('lote', $lotes)
                     ->whereIn('setor_id', $setoresIds)
                     ->get(['produto_id', 'lote', 'setor_id', 'data_fabricacao', 'data_vencimento'])
-                    ->keyBy(function($item) {
-                        return $item->produto_id . '-' . $item->lote . '-' . $item->setor_id;
+                    ->groupBy(function($item) {
+                        return $item->produto_id . '-' . $item->lote;
                     });
             }
 
             // Enriquecer os itens com informações de lote (data_fabricacao e data_vencimento)
+            // e higienizar a string de lote
             $results->each(function ($movimentacao) use ($lotesPreloaded) {
                 $movimentacao->itens->each(function ($item) use ($movimentacao, $lotesPreloaded) {
-                    if ($item->lote && $movimentacao->setor_destino_id) {
-                        $key = $item->produto_id . '-' . $item->lote . '-' . $movimentacao->setor_destino_id;
-                        $loteInfo = $lotesPreloaded->get($key);
-                        
-                        if ($loteInfo) {
-                            $item->data_fabricacao = $loteInfo->data_fabricacao;
-                            $item->data_vencimento = $loteInfo->data_vencimento;
-                        } else {
-                            $item->data_fabricacao = null;
-                            $item->data_vencimento = null;
+                    $codigos = $this->extrairCodigosLote($item->lote);
+                    $item->lote = !empty($codigos) ? implode(', ', $codigos) : ($item->lote ? $this->sanitizarLoteExibicao($item->lote) : '-');
+
+                    $validades = [];
+                    $fabricacoes = [];
+                    
+                    if (!empty($codigos)) {
+                        foreach ($codigos as $cod) {
+                            $key = $item->produto_id . '-' . $cod;
+                            $matches = $lotesPreloaded->get($key);
+                            if ($matches && $matches->isNotEmpty()) {
+                                $match = $matches->firstWhere('setor_id', $movimentacao->setor_origem_id)
+                                      ?? $matches->firstWhere('setor_id', $movimentacao->setor_destino_id)
+                                      ?? $matches->first();
+                                if ($match) {
+                                    if ($match->data_vencimento) {
+                                        $validades[] = date('d/m/Y', strtotime($match->data_vencimento));
+                                    }
+                                    if ($match->data_fabricacao) {
+                                        $fabricacoes[] = date('d/m/Y', strtotime($match->data_fabricacao));
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        $item->data_fabricacao = null;
-                        $item->data_vencimento = null;
                     }
+
+                    $item->data_vencimento = !empty($validades) ? implode(', ', array_unique($validades)) : null;
+                    $item->data_fabricacao = !empty($fabricacoes) ? implode(', ', array_unique($fabricacoes)) : null;
                 });
             });
 
@@ -610,6 +736,7 @@ class RelatoriosController extends Controller
                 ->toArray();
 
             // Query agregada: agrupa por data e produto, soma quantidades
+            // Considera saídas operacionais ('S') e transferências setoriais ('T')
             $query = DB::table('item_movimentacao as im')
                 ->join('movimentacao as m', 'im.movimentacao_id', '=', 'm.id')
                 ->join('produtos as p', 'im.produto_id', '=', 'p.id')
@@ -628,7 +755,7 @@ class RelatoriosController extends Controller
                     DB::raw('COUNT(DISTINCT m.id) as total_movimentacoes'),
                     DB::raw('COUNT(DISTINCT m.setor_origem_id) as total_setores')
                 )
-                ->where('m.tipo', 'S') // Apenas saídas
+                ->whereIn('m.tipo', ['S', 'T'])
                 ->where('m.status_solicitacao', 'A') // Apenas aprovadas
                 ->whereDate('m.data_hora', '>=', $dateFrom)
                 ->whereDate('m.data_hora', '<=', $dateTo);
@@ -686,6 +813,44 @@ class RelatoriosController extends Controller
                 ->orderByDesc(DB::raw('SUM(im.quantidade_liberada)'))
                 ->get();
 
+            // Calcular o total de devoluções aprovadas no período (tipo = 'D') para dedução e consumo líquido
+            $devolucoesQuery = DB::table('item_movimentacao as im')
+                ->join('movimentacao as m', 'im.movimentacao_id', '=', 'm.id')
+                ->select(
+                    DB::raw('DATE(m.data_hora) as data'),
+                    'im.produto_id',
+                    DB::raw('SUM(im.quantidade_liberada) as total_devolvido')
+                )
+                ->where('m.tipo', 'D')
+                ->where('m.status_solicitacao', 'A')
+                ->whereDate('m.data_hora', '>=', $dateFrom)
+                ->whereDate('m.data_hora', '<=', $dateTo);
+
+            if (!$isSuperAdmin) {
+                $devolucoesQuery->where(function ($q) use ($setoresPermitidos) {
+                    $q->whereIn('m.setor_origem_id', $setoresPermitidos)
+                      ->orWhereIn('m.setor_destino_id', $setoresPermitidos);
+                });
+            }
+
+            if (!empty($filters['setor_id'])) {
+                $devolucoesQuery->where(function ($q) use ($filters) {
+                    $q->where('m.setor_origem_id', $filters['setor_id'])
+                      ->orWhere('m.setor_destino_id', $filters['setor_id']);
+                });
+            }
+
+            if (!empty($filters['produto_id'])) {
+                $devolucoesQuery->where('im.produto_id', $filters['produto_id']);
+            }
+
+            $devolucoesPorDataProduto = $devolucoesQuery
+                ->groupBy(DB::raw('DATE(m.data_hora)'), 'im.produto_id')
+                ->get()
+                ->keyBy(function($item) {
+                    return $item->data . '-' . $item->produto_id;
+                });
+
             // Agrupar resultados por data
             $groupedByDate = [];
             foreach ($results as $item) {
@@ -696,9 +861,18 @@ class RelatoriosController extends Controller
                         'data' => $data,
                         'produtos' => [],
                         'total_produtos' => 0,
-                        'quantidade_total_dia' => 0
+                        'quantidade_total_dia' => 0,
+                        'quantidade_saida_bruta_dia' => 0,
+                        'quantidade_devolvida_dia' => 0,
+                        'quantidade_liquida_dia' => 0,
                     ];
                 }
+
+                $keyDevolucao = $data . '-' . $item->produto_id;
+                $devolucaoItem = $devolucoesPorDataProduto->get($keyDevolucao);
+                $qtdDevolvida = $devolucaoItem ? (int) $devolucaoItem->total_devolvido : 0;
+                $qtdSaidaBruta = (int) $item->quantidade_total;
+                $qtdLiquida = max(0, $qtdSaidaBruta - $qtdDevolvida);
                 
                 // Buscar movimentações detalhadas (origem e destino) deste produto nesta data
                 $detalhadasQuery = DB::table('item_movimentacao as im')
@@ -707,6 +881,7 @@ class RelatoriosController extends Controller
                     ->leftJoin('setores as sd', 'm.setor_destino_id', '=', 'sd.id')
                     ->select(
                         'm.id as movimentacao_id',
+                        'm.tipo',
                         'so.id as setor_origem_id',
                         'so.nome as setor_origem_nome',
                         'sd.id as setor_destino_id',
@@ -717,7 +892,7 @@ class RelatoriosController extends Controller
                     )
                     ->where('im.produto_id', $item->produto_id)
                     ->whereDate('m.data_hora', $data)
-                    ->where('m.tipo', 'S')
+                    ->whereIn('m.tipo', ['S', 'T'])
                     ->where('m.status_solicitacao', 'A');
 
                 // Reaplicar o escopo de setores permitidos também no detalhe,
@@ -743,11 +918,16 @@ class RelatoriosController extends Controller
                         'grupo_produto' => $item->grupo_produto,
                         'tipo' => $item->tipo_produto,
                     ],
-                    'quantidade_total' => (int) $item->quantidade_total,
+                    'quantidade_saida_bruta' => $qtdSaidaBruta,
+                    'quantidade_devolvida' => $qtdDevolvida,
+                    'quantidade_liquida' => $qtdLiquida,
+                    'quantidade_total' => $qtdLiquida,
                     'total_movimentacoes' => (int) $item->total_movimentacoes,
                     'movimentacoes' => $movimentacoesDetalhadas->map(function($mov) {
                         return [
                             'movimentacao_id' => $mov->movimentacao_id,
+                            'tipo' => $mov->tipo,
+                            'tipo_descricao' => $mov->tipo === 'T' ? 'Transferência Setorial' : 'Saída Direta',
                             'quantidade' => (int) $mov->quantidade,
                             'setor_origem' => [
                                 'id' => $mov->setor_origem_id,
@@ -764,7 +944,10 @@ class RelatoriosController extends Controller
                 ];
                 
                 $groupedByDate[$data]['total_produtos']++;
-                $groupedByDate[$data]['quantidade_total_dia'] += (int) $item->quantidade_total;
+                $groupedByDate[$data]['quantidade_saida_bruta_dia'] += $qtdSaidaBruta;
+                $groupedByDate[$data]['quantidade_devolvida_dia'] += $qtdDevolvida;
+                $groupedByDate[$data]['quantidade_liquida_dia'] += $qtdLiquida;
+                $groupedByDate[$data]['quantidade_total_dia'] += $qtdLiquida;
             }
             
             // Converter para array indexado e ordenar por data
