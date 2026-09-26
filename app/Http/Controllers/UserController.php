@@ -13,22 +13,38 @@ use App\Http\Requests\UserRequest;
 
 class UserController extends Controller
 {
-    public function add(UserRequest $request)
+    public function store(Request $request)
     {
-        $dadosValidados = $request->validated()['user'];
+        $dadosValidados = method_exists($request, 'validated') 
+            ? ($request->validated()['user'] ?? $request->validated()) 
+            : ($request->input('user') ?? $request->all());
         $dadosBrutos    = $request->all();
+
+        // Padronização e captura da senha (suporta 'password' ou 'senha', no formato plano ou dentro de 'user')
+        $rawPassword = $request->input('password')
+            ?? $request->input('senha')
+            ?? $request->input('user.password')
+            ?? $request->input('user.senha')
+            ?? ($dadosValidados['password'] ?? ($dadosValidados['senha'] ?? null))
+            ?? ($dadosBrutos['user']['password'] ?? ($dadosBrutos['user']['senha'] ?? ($dadosBrutos['password'] ?? ($dadosBrutos['senha'] ?? null))));
 
         DB::beginTransaction();
         try {
             $user                  = new User;
-            $user->status          = $dadosValidados['status'] ?? 'A';
-            $user->name            = mb_strtoupper($dadosValidados['name']);
-            $user->email           = mb_strtolower($dadosValidados['email']);
-            $user->telefone        = isset($dadosValidados['telefone']) ? preg_replace('/\D/', '', $dadosValidados['telefone']) : null;
-            $user->data_nascimento = $dadosValidados['data_nascimento'] ?? null;
-            $user->cpf             = preg_replace('/\D/', '', $dadosValidados['cpf']);
-            $user->regime_contratacao_id    = $dadosValidados['regime_contratacao_id'] ?? null;
-            $user->password        = Hash::make($dadosValidados['password']);
+            $user->status          = $dadosValidados['status'] ?? $request->input('status', 'A');
+            $user->name            = mb_strtoupper($dadosValidados['name'] ?? $request->input('name'));
+            $user->email           = mb_strtolower($dadosValidados['email'] ?? $request->input('email'));
+            $user->telefone        = isset($dadosValidados['telefone']) 
+                ? preg_replace('/\D/', '', $dadosValidados['telefone']) 
+                : ($request->filled('telefone') ? preg_replace('/\D/', '', $request->input('telefone')) : null);
+            $user->data_nascimento = $dadosValidados['data_nascimento'] ?? $request->input('data_nascimento') ?? null;
+            $user->cpf             = preg_replace('/\D/', '', $dadosValidados['cpf'] ?? $request->input('cpf') ?? '');
+            $user->regime_contratacao_id = $dadosValidados['regime_contratacao_id'] ?? $request->input('regime_contratacao_id') ?? null;
+
+            // Garantia de persistência de senha devidamente criptografada com Hash::make
+            if (!empty($rawPassword)) {
+                $user->password = Hash::make($rawPassword);
+            }
 
             $user->save();
 
@@ -48,9 +64,14 @@ class UserController extends Controller
         return response()->json(['status' => true, 'data' => $user]);
     }
 
+    public function add(UserRequest $request)
+    {
+        return $this->store($request);
+    }
+
     public function update(UserRequest $request)
     {
-        $dadosValidados = $request->validated()['user'];
+        $dadosValidados = $request->validated()['user'] ?? $request->validated();
         $dadosBrutos    = $request->all();
         $id             = $dadosValidados['id'] ?? null;
 
@@ -67,6 +88,14 @@ class UserController extends Controller
             }
         }
 
+        // Padronização e captura da senha no update (suporta 'password' ou 'senha')
+        $rawPassword = $request->input('password')
+            ?? $request->input('senha')
+            ?? $request->input('user.password')
+            ?? $request->input('user.senha')
+            ?? ($dadosValidados['password'] ?? ($dadosValidados['senha'] ?? null))
+            ?? ($dadosBrutos['user']['password'] ?? ($dadosBrutos['user']['senha'] ?? null));
+
         DB::beginTransaction();
         try {
             $user->name            = mb_strtoupper($dadosValidados['name']);
@@ -77,8 +106,8 @@ class UserController extends Controller
             $user->status          = $dadosValidados['status'] ?? $user->status;
             $user->regime_contratacao_id    = $dadosValidados['regime_contratacao_id'] ?? null;
 
-            if (!empty($dadosValidados['password'])) {
-                $user->password = Hash::make($dadosValidados['password']);
+            if (!empty($rawPassword)) {
+                $user->password = Hash::make($rawPassword);
             }
 
             $user->save();

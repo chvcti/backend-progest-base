@@ -13,6 +13,45 @@ use App\Http\Requests\UsuarioSetorRequest;
 class UsuarioSetorController extends Controller
 {
     /**
+     * Verifica se o usuário autenticado é Super Admin ou Admin da CAF (pode conceder perfil admin).
+     */
+    private function canAssignAdminRole(User $usuario): bool
+    {
+        if ($usuario->isSuperAdmin() || !empty($usuario->is_super_admin)) {
+            return true;
+        }
+
+        if (method_exists($usuario, 'isAdminCaf') && $usuario->isAdminCaf()) {
+            return true;
+        }
+
+        return $usuario->setores()
+            ->where(function ($q) {
+                $q->where('setores.id', 1)
+                  ->orWhere('setores.nome', 'LIKE', '%CAF%');
+            })
+            ->wherePivot('perfil', 'admin')
+            ->exists();
+    }
+
+    /**
+     * Verifica se o usuário pode gerenciar vínculos do setor especificado.
+     */
+    private function canManageSetor(User $usuario, int $setorId): bool
+    {
+        // Super Admin e Admin da CAF têm governança para gerenciar vínculos de qualquer setor
+        if ($this->canAssignAdminRole($usuario)) {
+            return true;
+        }
+
+        // Administrador do setor pode gerenciar vínculos do seu próprio setor
+        return $usuario->setores()
+            ->where('setores.id', $setorId)
+            ->wherePivot('perfil', 'admin')
+            ->exists();
+    }
+
+    /**
      * Vincular usuário a um setor com perfil.
      * Equivalente ao padrão `add` dos demais controllers.
      */
@@ -26,15 +65,17 @@ class UsuarioSetorController extends Controller
             }
 
             $usuarioId = $dados['usuario_id'];
-            $setorId   = $dados['setor_id'];
+            $setorId   = (int) $dados['setor_id'];
             $perfil    = $dados['perfil'];
 
-            // Verificar permissão: somente admin do setor pode criar vínculo
             /** @var User $usuario */
             $usuario = Auth::user();
-            $isAdmin = $usuario->isSuperAdmin() || $usuario->setores()->where('setores.id', $setorId)->wherePivot('perfil', 'admin')->exists();
-            if (!$isAdmin) {
+            if (!$this->canManageSetor($usuario, $setorId)) {
                 return response()->json(['status' => false, 'message' => 'Ação permitida apenas para administradores deste setor.'], 403);
+            }
+
+            if ($perfil === 'admin' && !$this->canAssignAdminRole($usuario)) {
+                return response()->json(['status' => false, 'message' => 'Apenas o Administrador da CAF ou o Super Administrador podem conceder o perfil de Administrador.'], 403);
             }
 
             // Checar duplicidade
@@ -47,7 +88,6 @@ class UsuarioSetorController extends Controller
             // Regra de Negócio: Setor sem estoque não pode ter 'almoxarife'
             $setorObj = DB::table('setores')->where('id', $setorId)->first();
             if ($setorObj) {
-                // Se não tem ninguém como fornecedor dele, ele é a raiz (CAF)
                 // Se não tem ninguém como fornecedor dele, ele é a raiz (CAF)
                 if (!$setorObj->estoque && $perfil === 'almoxarife') {
                     return response()->json(['status' => false, 'message' => 'Operação negada: Um setor sem estoque próprio não pode ter usuários almoxarifes.'], 422);
@@ -82,14 +122,17 @@ class UsuarioSetorController extends Controller
             }
 
             $usuarioId = $dados['usuario_id'];
-            $setorId   = $dados['setor_id'];
+            $setorId   = (int) $dados['setor_id'];
             $perfil    = $dados['perfil'];
 
             /** @var User $usuario */
             $usuario = Auth::user();
-            $isAdmin = $usuario->isSuperAdmin() || $usuario->setores()->where('setores.id', $setorId)->wherePivot('perfil', 'admin')->exists();
-            if (!$isAdmin) {
+            if (!$this->canManageSetor($usuario, $setorId)) {
                 return response()->json(['status' => false, 'message' => 'Ação permitida apenas para administradores deste setor.'], 403);
+            }
+
+            if ($perfil === 'admin' && !$this->canAssignAdminRole($usuario)) {
+                return response()->json(['status' => false, 'message' => 'Apenas o Administrador da CAF ou o Super Administrador podem conceder o perfil de Administrador.'], 403);
             }
 
             $registro = DB::table('usuario_setor')->where('usuario_id', $usuarioId)->where('setor_id', $setorId)->first();
@@ -125,12 +168,11 @@ class UsuarioSetorController extends Controller
             $dados = $request->validated();
 
             $usuarioId = $dados['usuario_id'];
-            $setorId   = $dados['setor_id'];
+            $setorId   = (int) $dados['setor_id'];
 
             /** @var User $usuario */
             $usuario = Auth::user();
-            $isAdmin = $usuario->isSuperAdmin() || $usuario->setores()->where('setores.id', $setorId)->wherePivot('perfil', 'admin')->exists();
-            if (!$isAdmin) {
+            if (!$this->canManageSetor($usuario, $setorId)) {
                 return response()->json(['status' => false, 'message' => 'Ação permitida apenas para administradores deste setor.'], 403);
             }
 
@@ -187,7 +229,7 @@ class UsuarioSetorController extends Controller
             // podem consultar os vínculos de outro usuário
             if (!empty($usuarioIdSolicitado) && (int) $usuarioIdSolicitado !== (int) $autenticado->id) {
                 $hasAdminProfile = $autenticado->setores()->wherePivot('perfil', 'admin')->exists();
-                if (!$autenticado->isSuperAdmin() && !$autenticado->isAdminCaf() && !$hasAdminProfile) {
+                if (!$this->canAssignAdminRole($autenticado) && !$hasAdminProfile) {
                     return response()->json(['status' => false, 'message' => 'Ação não permitida.'], 403);
                 }
                 $usuarioId = $usuarioIdSolicitado;
