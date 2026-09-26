@@ -156,8 +156,9 @@ class DemonstracaoSistemaSeeder extends Seeder
         $this->command->info('👥 [2/5] Criando usuários de homologação e vínculos de acesso...');
 
         $senhaHash = Hash::make('Senha@123');
+        $regimeId = DB::table('regime_contratacao')->value('id') ?? 1;
 
-        $criarUsuario = function($name, $email, $cpf, $telefone) use ($senhaHash, $now) {
+        $criarUsuario = function($name, $email, $cpf, $telefone) use ($senhaHash, $regimeId, $now) {
             return User::updateOrCreate(
                 ['email' => $email],
                 [
@@ -167,7 +168,7 @@ class DemonstracaoSistemaSeeder extends Seeder
                     'data_nascimento'       => '1988-06-15',
                     'password'              => $senhaHash,
                     'status'                => 'A',
-                    'regime_contratacao_id' => 1,
+                    'regime_contratacao_id' => $regimeId,
                     'created_at'            => $now,
                     'updated_at'            => $now,
                 ]
@@ -505,6 +506,11 @@ class DemonstracaoSistemaSeeder extends Seeder
                         );
                     }
                 }
+
+                // Invariante técnica estrita: soma dos lotes rigorosamente idêntica a estoque.quantidade_atual
+                $qtdAtual = (int) EstoqueLote::where('setor_id', $setorEstoque->id)
+                    ->where('produto_id', $produto->id)
+                    ->sum('quantidade_disponivel');
 
                 Estoque::updateOrCreate(
                     [
