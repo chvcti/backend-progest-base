@@ -42,21 +42,18 @@ O Laravel e seus pacotes de Excel exigem extensões que vêm desativadas por pad
    php artisan key:generate
    php artisan migrate
    ```
-7. **Povoar o Banco (Opcional):** Você possui 3 opções de carga de dados:
-   - **Opção A (Banco de Produção/Entrega):** Importa o catálogo real de produtos do Excel, cria os 63 setores e o usuário `adminti@gmail.com`. Deixa tudo zerado de movimentações.
+7. **Povoar o Banco de Dados:** Você possui 2 opções oficiais consolidadas:
+   - **Opção A — Produção / Base Limpa (Padrão):**
+     Executa a migração completa, cataloga os polos, os 62 setores oficiais limpos, regimes de contratação, unidades de medida, grupos, fornecedores homologados e o catálogo oficial completo de produtos (417 itens), contendo apenas o usuário Super Admin raiz (`adminti@gmail.com` / `adminti`). Setores ficam 100% zerados de movimentações e estoques.
      ```bash
      php artisan migrate:fresh --seed
      ```
-   - **Opção B (Modo Demonstração):** Cria apenas 13 setores essenciais e dados fakes de relatórios, estoques e movimentações rápidos para apresentação ágil do sistema.
+   - **Opção B — Demonstração / Homologação (Cenários Hiper-Realistas):**
+     Herda a base limpa e popula cenários hiper-realistas exclusivamente nos setores marcados com `(Exemplo)`, criando histórico de 90 dias com NFs, fornecedores ativos, controle especial da **Portaria 344/98** (SIMPAS e EAN-13), curvas de estoque (70% normal, 20% alerta reposição, 10% zerado), lotes saudáveis, críticos (15-25 dias) e vencidos (-10 dias), além de ciclo completo de movimentações (Rascunho, Pendente, Atendido FIFO, Reprovado, Cancelado, Atendimento parcial com item zerado, Devoluções auditadas e Consumo interno por avaria):
      ```bash
-     php artisan migrate:fresh
-     php artisan db:seed --class=DemoSystemSeeder
+     php artisan db:seed --class=DemonstracaoSistemaSeeder
      ```
-   - **Opção C (Testes Extremos):** Importa o Excel completo (com algoritmo de classificação inteligente de grupos), os 63 setores oficiais e gera milhares de movimentações fakes para simular carga pesada.
-     ```bash
-     php artisan migrate:fresh
-     php artisan db:seed --class=FullSystemSeeder
-     ```
+
 8. **Inicie o servidor:**
    ```bash
    php artisan serve
@@ -73,42 +70,38 @@ Ideal para simular o ambiente de produção com domínios reais e Proxy Reverso.
 
 ### Passo a Passo
 
-1.  **Rede:** Garanta que a rede pública existe rodando: `docker network create traefik-public`.
-2.  **Variáveis:** Crie suas próprias cópias de ambiente baseadas nos `.example`:
-    * Copie `.env.docker.example` para `.env.docker.local` (este será consumido pelo Docker Desktop).
-    * (O `.env` normal e `.env.example` servem apenas para o uso por fora do Docker/XAMPP).
+1. **Rede:** Garanta que a rede pública existe rodando: `docker network create traefik-public`.
+2. **Variáveis:** Crie suas próprias cópias de ambiente baseadas nos `.example`:
+   * Copie `.env.docker.example` para `.env.docker.local` (este será consumido pelo Docker Desktop).
+   * (O `.env` normal e `.env.example` servem apenas para o uso por fora do Docker/XAMPP).
 3. **Ajuste as definições:** No `.env.docker.local` (Local) certifique-se que as seguintes variáveis estejam ajustadas para dev:
-    ```env
-    APP_ENV=local
-    APP_DEBUG=true
-    APP_DOMAIN=app.localhost
-    DB_HOST=mysql
-    DB_DATABASE=progest
-    DB_USERNAME=progest
-    DB_PASSWORD=progest_secret
-    ```
+   ```env
+   APP_ENV=local
+   APP_DEBUG=true
+   APP_DOMAIN=app.localhost
+   DB_HOST=mysql
+   DB_DATABASE=progest
+   DB_USERNAME=progest
+   DB_PASSWORD=progest_secret
+   ```
 4. **Adicione a `APP_KEY`:** O arquivo `.env.docker.local` precisa referenciar uma chave de criptografia na variável `APP_KEY=`.
-    * **Se você tem PHP na máquina (via XAMPP):** rode `php artisan key:generate --show` no terminal, copie o resultado e cole no arquivo.
-    * **Se NÃO tem PHP:** deixe em branco por enquanto. Após executar o passo 5 (subir containers), rode o comando `docker compose -f docker-compose.local.yml exec progest-api php artisan key:generate --show`, copie o valor resultante e cole no seu `.env.docker.local`. Por fim, repita o comando do passo 5 para aplicar a nova chave aos containers.
-5.  **Suba os containers localmente (na pasta backend do projeto) :** 
+   * **Se você tem PHP na máquina (via XAMPP):** rode `php artisan key:generate --show` no terminal, copie o resultado e cole no arquivo.
+   * **Se NÃO tem PHP:** deixe em branco por enquanto. Após executar o passo 5 (subir containers), rode o comando `docker compose -f docker-compose.local.yml exec progest-api php artisan key:generate --show`, copie o valor resultante e cole no seu `.env.docker.local`. Por fim, repita o comando do passo 5 para aplicar a nova chave aos containers.
+5. **Suba os containers localmente (na pasta backend do projeto):** 
    ```bash
    docker compose -f docker-compose.local.yml up -d --build
    ```
-6.  **Prepare o Banco:**
-   *Opção A: Criar banco oficial para Produção (Catálogo oficial de produtos, 63 setores e o adminti):*
-   ```bash
-   docker compose -f docker-compose.local.yml exec progest-api php artisan migrate:fresh --seed
-   ```
-   *Opção B: Criar banco Demo (apresentações rápidas com dados fakes reduzidos):*
-   ```bash
-   docker compose -f docker-compose.local.yml exec progest-api sh -c "php artisan migrate:fresh && php artisan db:seed --class=DemoSystemSeeder"
-   ```
-   *Opção C: Criar banco Full (Catálogo oficial completo + 63 setores + dados fakes para teste de carga):*
-   ```bash
-   docker compose -f docker-compose.local.yml exec progest-api sh -c "php artisan migrate:fresh && php artisan db:seed --class=FullSystemSeeder"
-   ```
+6. **Prepare o Banco de Dados:**
+   - **Base Limpa de Produção:**
+     ```bash
+     docker compose -f docker-compose.local.yml exec progest-api php artisan migrate:fresh --seed
+     ```
+   - **Ambiente de Demonstração / Homologação:**
+     ```bash
+     docker compose -f docker-compose.local.yml exec progest-api php artisan db:seed --class=DemonstracaoSistemaSeeder
+     ```
 
-   *(Nota de Performance: O catálogo oficial de produtos roda a partir do seeder estático pré-processado `CatalogoProdutosOficialSeeder`, garantindo execução em menos de 1 segundo sem consumo excessivo de memória RAM).*
+   *(Nota de Performance: O catálogo oficial de produtos roda a partir do seeder estático pré-processado `CatalogoProdutosOficialSeeder`, garantindo execução ultrarrápida em menos de 1 segundo sem sobrecarregar a memória RAM).*
 
    *Caso surja uma nova planilha Excel de produtos no futuro, basta regerar o seeder com:*
    ```bash

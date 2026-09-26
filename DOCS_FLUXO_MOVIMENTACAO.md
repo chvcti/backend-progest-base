@@ -1,32 +1,53 @@
-# Documentação Arquitetural: Fluxo de Movimentações, Pedidos e Rascunhos
+# Documentação Arquitetural: Fluxo de Movimentações, Pedidos e Devoluções — ProGest
 
-## 1. Ausência de Tabela "Pedidos"
-Na arquitetura do Progest, **não existe** uma tabela física ou entidade chamada `pedidos`. 
-Todo o fluxo de solicitação de suprimentos, sejam eles pedidos entre setores, transferências, saídas ou abastecimentos, é centralizado e modelado através da entidade/tabela **`movimentacoes`**. 
+## 1. Centralização na Tabela `movimentacao`
+Na arquitetura do ProGest, **não existe** uma tabela física ou entidade chamada `pedidos`. 
+Todo o fluxo de requisição, suprimento, transferência, saída assistencial, perda/avaria e devolução é centralizado na tabela **`movimentacao`** e detalhado em **`item_movimentacao`**.
 
-A diferenciação lógica do que o usuário chama de "Pedido" dá-se pelo campo `tipo`:
-- `tipo = 'S'` (Saída/Solicitação): Representa um "Pedido" feito por um setor (Setor Solicitante) a um estoque fornecedor/distribuidor (Setor Origem).
-- `tipo = 'E'` (Entrada): Refere-se a registros diretos de entrada de notas fiscais/abastecimento primário.
+### 1.1. Tipos de Movimentação (`tipo`)
+- **`tipo = 'T'` (Transferência Setorial):** Fluxo hospitalar padrão entre setores (ex: CAF $\to$ Farmácia Satélite $\to$ Clínicas/UTIs).
+- **`tipo = 'D'` (Devolução):** Fluxo reverso originado de um pedido atendido. Devolve itens não administrados ou sobras cirúrgicas, restituindo saldo ao lote e estoque de origem.
+- **`tipo = 'S'` (Saída Direta):** Dispensação assistencial direta ou baixa sem retorno.
+- **`tipo = 'C'` (Consumo Interno / Perda / Avaria):** Baixa interna por quebra de frasco, extravio ou avaria identificada no almoxarifado.
 
-Portanto, quando as regras de negócios, views Vue.js ou Controllers falarem sobre "Pedidos" ou "Solicitações", na camada de persistência trata-se de um registro de `Movimentacao` com `tipo = 'S'`.
+---
 
-## 2. O Ciclo de Vida do Rascunho (Status 'C')
-O status de Rascunho foi introduzido para permitir que usuários montem pedidos longos de forma iterativa antes de enviá-los de fato à farmácia ou almoxarifado.
+## 2. Ciclo de Vida e Máquina de Estados (`status_solicitacao`)
 
-### 2.1. O que é o Rascunho?
-Um Rascunho é um registro de `Movimentacao` criado na base de dados com o campo `status_solicitacao = 'C'` (Criado/Rascunho). 
-Neste estágio:
-- **Não há trava de estoque:** Os itens inseridos no rascunho não deduzem, reservam ou impactam o saldo atual do estoque do setor origem.
-- **Visibilidade Estrita:** O rascunho é visível **apenas** para o setor solicitante. O setor de origem (CAF, Dispensação, Almoxarifado) não enxerga essa movimentação no seu painel de "Pedidos Recebidos" ou "Pendentes" enquanto o status for `C`.
+| Status | Código | Visibilidade & Efeitos no Estoque |
+|---|:---:|---|
+| **Rascunho** | `'C'` | Visível **apenas** para o solicitante. Permite adicionar, alterar e remover itens iterativamente. **Não reserva nem deduz saldo**. |
+| **Pendente** | `'P'` | Torna-se visível na fila de triagem do distribuidor. Bloqueia alterações pelo solicitante (permite apenas cancelamento `'X'`). |
+| **Aprovado / Atendido** | `'A'` | O almoxarife/admin do distribuidor analisa as quantidades e aprova. **Gera baixa/consumo estrito via FIFO nos lotes**. |
+| **Reprovado** | `'R'` | Negado pelo distribuidor com justificativa obrigatória registrada em `observacao`. Não afeta estoques. |
+| **Cancelado** | `'X'` | Cancelado pelo próprio solicitante enquanto o pedido estava pendente (`'P'`). |
 
-### 2.2. Transição para Pendente (Envio do Pedido)
-Quando o usuário clica em "Enviar Pedido" na interface:
-1. O backend recebe a instrução para processar a movimentação.
-2. O sistema altera o campo `status_solicitacao` de `'C'` (Rascunho) para `'P'` (Pendente).
-3. **Ponto de Inflexão de Visibilidade:** A partir do momento em que se torna `'P'`, o pedido aparece na fila de atendimento do Setor Origem.
-4. **Alocação/Reserva:** Somente após virar Pendente, o fluxo (se implementado com reserva prévia) ou o atendimento subsequente começam a considerar as quantidades demandadas.
+---
 
-### 2.3. Diagrama do Fluxo Básico de Status
-1. **Rascunho ('C')** -> Criado pelo solicitante, itens podem ser adicionados/removidos, invisível ao fornecedor, sem impacto no saldo.
-2. **Pendente ('P')** -> Solicitante submete o pedido, trava de edição habilitada para o solicitante, torna-se visível ao fornecedor.
-3. **Atendido ('A') / Atendido Parcialmente / Cancelado ('X')** -> O fornecedor atua sobre o pedido aprovando e bipando itens (se houver), deduzindo definitivamente o estoque no fechamento do movimento (alteração do saldo nos lotes).
+## 3. Travas de Negócio e Integridade Transacional (Fases 4 e 5)
+
+### 3.1. Trava de Teto de Solicitação (Trava 1)
+- **Regra:** O almoxarife é estritamente impedido de aprovar uma quantidade maior do que a solicitada pelo requisitante (`$qtdLiberar > $qtdPedida`).
+- **Validação:** Aplica-se tanto para transferências (`'T'`) quanto para devoluções (`'D'`). Caso violado, a API aborta a requisição com HTTP 422 e rollback automático.
+
+### 3.2. Atendimento Parcial com Item Zerado por Desabastecimento (Trava 2)
+- **Regra:** Quando o almoxarifado não possuir estoque para determinado produto do pedido, o item pode ser liberado com quantidade **zero** (`quantidade_liberada = 0`).
+- **Preservação de Histórico:** O item zerado permanece registrado no pedido para comprovar formalmente a recusa por desabastecimento. O pedido é aprovado normalmente se ao menos um item tiver quantidade liberada $> 0$. Se todos os itens forem zerados, o pedido deve ser reprovado (`'R'`).
+
+### 3.3. Prévia Reativa de Lotes FIFO (`/preview-lotes`)
+- **Regra:** O modal de atendimento no frontend consulta reativamente a rota `/api/movimentacao/{id}/preview-lotes`.
+- **Funcionamento:** Ordena os lotes vigentes com saldo disponível por `data_vencimento ASC, id ASC`, exibindo em tempo real quais lotes e validades serão consumidos conforme o almoxarife altera a quantidade a liberar.
+
+### 3.4. Teto de Devoluções e Abate Consecutivo
+- **Regra:** Devoluções do tipo `'D'` só podem ser originadas de pedidos atendidos (`'A'`).
+- **Fórmula de Teto:** O saldo devolvível máximo de cada item é calculado por:
+  $$\text{Saldo Devolvível} = \text{Quantidade Atendida} - \text{Quantidade Já Devolvida}$$
+- **Tentativas Consecutivas:** Se um pedido de 50 ampolas teve 15 devolvidas anteriormente, uma nova devolução fica limitada a no máximo 35 ampolas. Tentativas acima desse teto são rejeitadas com erro 422.
+
+### 3.5. Sigilo Seletivo de Estoque e Requisição Cega
+- **No Painel do Setor:** O solicitante **só visualiza a aba de Estoque** se o setor atual possuir controle físico de estoque (`setor.estoque == true`). Em setores assistenciais sem estoque (ex: UTI, Clínicas), a aba de Estoque é completamente oculta para o solicitante.
+- **Requisição Cega (Novo Pedido):** Na busca de produtos para adicionar ao carrinho (`ProductSearch.vue`), é proibido exibir saldo, quantidade física ou badge de disponibilidade do setor distribuidor, garantindo pedidos baseados em prescrição médica real e não no estoque alheio.
+
+### 3.6. Auditoria Obrigatória do MySQL
+- Triggers ativas garantem que qualquer movimentação com status `'A'` ou `'R'` possua obrigatoriamente `aprovador_usuario_id` preenchido.
+- Triggers `before_insert_estoque` e `before_update_estoque` impedem a inserção de saldos negativos, mantendo alinhamento estrito com os saldos em `estoque_lote`.
