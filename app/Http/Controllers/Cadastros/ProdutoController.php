@@ -22,12 +22,14 @@ class ProdutoController
             // Ignorar produtos sem nome (registros incompletos/importados sem dados)
             $query->whereNotNull('produtos.nome')->where('produtos.nome', '!=', '');
 
-            // Busca textual por nome, marca ou grupo
+            // Busca textual por nome, marca, código SIMPAS, código de barras ou grupo
             $search = $request->input('search');
             if (!empty($search)) {
                 $query->where(function ($q) use ($search) {
                     $q->where('produtos.nome', 'LIKE', '%' . $search . '%')
                       ->orWhere('produtos.marca', 'LIKE', '%' . $search . '%')
+                      ->orWhere('produtos.codigo_simpas', 'LIKE', '%' . $search . '%')
+                      ->orWhere('produtos.codigo_barras', 'LIKE', '%' . $search . '%')
                       ->orWhereHas('grupoProduto', function ($gq) use ($search) {
                           $gq->where('nome', 'LIKE', '%' . $search . '%');
                       });
@@ -102,7 +104,7 @@ class ProdutoController
             $sortDir = strtolower($request->input('sort_dir', 'asc'));
             if (!in_array($sortDir, ['asc', 'desc'])) $sortDir = 'asc';
 
-            $allowedSortColumns = ['id', 'nome', 'marca', 'status'];
+            $allowedSortColumns = ['id', 'nome', 'marca', 'status', 'codigo_simpas', 'codigo_barras'];
             if (in_array($sortBy, $allowedSortColumns)) {
                 $query->orderBy('produtos.' . $sortBy, $sortDir);
             } elseif ($sortBy === 'grupo_produto') {
