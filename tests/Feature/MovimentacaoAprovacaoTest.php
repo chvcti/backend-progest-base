@@ -23,17 +23,40 @@ class MovimentacaoAprovacaoTest extends TestCase
             'perfil' => 'admin'
         ]);
 
-        $response = $this->actingAs($user)->postJson("/api/movimentacao/{$movimentacao->id}/process", [
+        $produto = \App\Models\Produto::factory()->create();
+        $item = \App\Models\ItemMovimentacao::create([
+            'movimentacao_id' => $movimentacao->id,
+            'produto_id' => $produto->id,
+            'quantidade_solicitada' => 10,
+            'quantidade_liberada' => 0
+        ]);
+
+        // 1. Testa quantidade negativa
+        $responseNeg = $this->actingAs($user)->postJson("/api/movimentacao/{$movimentacao->id}/process", [
             'action' => 'approve',
             'itens' => [
-                ['id' => 1, 'quantidade_liberada' => 0]
+                ['id' => $item->id, 'quantidade_liberada' => -1]
             ]
         ]);
 
-        $response->assertStatus(422)
+        $responseNeg->assertStatus(422)
                  ->assertJsonFragment([
                      'status' => false,
-                     'message' => 'A quantidade aprovada deve ser estritamente maior que zero.'
+                     'message' => 'A quantidade aprovada não pode ser negativa.'
+                 ]);
+
+        // 2. Testa todos os itens zerados
+        $responseZero = $this->actingAs($user)->postJson("/api/movimentacao/{$movimentacao->id}/process", [
+            'action' => 'approve',
+            'itens' => [
+                ['id' => $item->id, 'quantidade_liberada' => 0]
+            ]
+        ]);
+
+        $responseZero->assertStatus(422)
+                 ->assertJsonFragment([
+                     'status' => false,
+                     'message' => 'Não é possível aprovar uma movimentação com todos os itens zerados. Rejeite a solicitação se não houver atendimento.'
                  ]);
     }
 
