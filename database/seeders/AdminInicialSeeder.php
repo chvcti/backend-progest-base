@@ -5,11 +5,13 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Carbon\Carbon;
 
 /**
  * ATENÇÃO - REGRA DE NEGÓCIO DO PROJETO:
- * Usuário adminti@gmail.com (Super Admin padrão do sistema).
+ * Usuário Super Admin padrão do sistema.
  * NÃO ALTERAR NEM EXCLUIR em seeders/migrations.
  */
 class AdminInicialSeeder extends Seeder
@@ -21,13 +23,17 @@ class AdminInicialSeeder extends Seeder
     {
         $now = Carbon::now();
 
+        $adminEmail = env('ADMIN_DEFAULT_EMAIL', 'adminti@gmail.com');
+        $adminPassword = env('ADMIN_DEFAULT_PASSWORD', Str::random(16));
+        $hashedPassword = Hash::make($adminPassword);
+
         // 1. Criar ou Atualizar Usuário Admin TI
-        $userExistente = DB::table('users')->where('email', 'adminti@gmail.com')->orWhere('cpf', '00000000000')->first();
+        $userExistente = DB::table('users')->where('email', $adminEmail)->orWhere('cpf', '00000000000')->first();
         if ($userExistente) {
             DB::table('users')->where('id', $userExistente->id)->update([
                 'name'            => 'ADMIN TI',
-                'email'           => 'adminti@gmail.com',
-                'password'        => Hash::make('adminti'),
+                'email'           => $adminEmail,
+                'password'        => $hashedPassword,
                 'cpf'             => '00000000000',
                 'telefone'        => '00000000000',
                 'data_nascimento' => '1990-01-01',
@@ -38,8 +44,8 @@ class AdminInicialSeeder extends Seeder
         } else {
             DB::table('users')->insert([
                 'name'            => 'ADMIN TI',
-                'email'           => 'adminti@gmail.com',
-                'password'        => Hash::make('adminti'),
+                'email'           => $adminEmail,
+                'password'        => $hashedPassword,
                 'cpf'             => '00000000000',
                 'telefone'        => '00000000000',
                 'data_nascimento' => '1990-01-01',
@@ -50,7 +56,13 @@ class AdminInicialSeeder extends Seeder
             ]);
         }
 
-        $admin = DB::table('users')->where('email', 'adminti@gmail.com')->first();
+        $mensagem = "Super Admin provisionado com sucesso: e-mail [{$adminEmail}]";
+        if ($this->command) {
+            $this->command->info($mensagem);
+        }
+        Log::info($mensagem);
+
+        $admin = DB::table('users')->where('email', $adminEmail)->first();
         if (!$admin) return;
 
         // 2. Tentar encontrar o Polo HGVC e Setor TI para vincular o adminti

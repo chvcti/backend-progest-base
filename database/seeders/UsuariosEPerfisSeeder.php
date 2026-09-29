@@ -25,11 +25,13 @@ class UsuariosEPerfisSeeder extends Seeder
         // =====================================================================
         // 1. Criar Usuários
         // =====================================================================
+        $userPassword = Hash::make(env('USER_DEFAULT_PASSWORD', 'Mudar@123'));
+
         $usuarios = [
             [
                 'name'            => 'Jean Solicitante',
                 'email'           => 'jeansolicitante@gmail.com',
-                'password'        => Hash::make('Admin123'),
+                'password'        => $userPassword,
                 'cpf'             => '11111111111',
                 'telefone'        => '00000000000',
                 'data_nascimento' => '1990-01-01',
@@ -39,7 +41,7 @@ class UsuariosEPerfisSeeder extends Seeder
             [
                 'name'            => 'Arthur Almoxarife',
                 'email'           => 'arthuralmoxarife@gmail.com',
-                'password'        => Hash::make('Admin123'),
+                'password'        => $userPassword,
                 'cpf'             => '22222222222',
                 'telefone'        => '00000000000',
                 'data_nascimento' => '1990-01-01',
@@ -49,7 +51,7 @@ class UsuariosEPerfisSeeder extends Seeder
             [
                 'name'            => 'Pablo Admin',
                 'email'           => 'pabloadmin@gmail.com',
-                'password'        => Hash::make('Admin123'),
+                'password'        => $userPassword,
                 'cpf'             => '33333333333',
                 'telefone'        => '00000000000',
                 'data_nascimento' => '1990-01-01',
@@ -59,13 +61,23 @@ class UsuariosEPerfisSeeder extends Seeder
         ];
 
         foreach ($usuarios as $dados) {
-            DB::table('users')->updateOrInsert(
-                ['email' => $dados['email']],
-                array_merge($dados, [
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ])
-            );
+            $userExistente = DB::table('users')
+                ->where('email', $dados['email'])
+                ->orWhere('cpf', $dados['cpf'])
+                ->first();
+
+            if ($userExistente) {
+                DB::table('users')->where('id', $userExistente->id)->update(
+                    array_merge($dados, ['updated_at' => $now])
+                );
+            } else {
+                DB::table('users')->insert(
+                    array_merge($dados, [
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ])
+                );
+            }
         }
 
         // =====================================================================

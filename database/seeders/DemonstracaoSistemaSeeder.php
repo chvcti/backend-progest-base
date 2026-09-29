@@ -155,7 +155,7 @@ class DemonstracaoSistemaSeeder extends Seeder
         // =====================================================================
         $this->command->info('👥 [2/5] Criando usuários de homologação e vínculos de acesso...');
 
-        $senhaHash = Hash::make('Senha@123');
+        $senhaHash = Hash::make(env('USER_DEFAULT_PASSWORD', 'Mudar@123'));
         $regimeId = DB::table('regime_contratacao')->value('id') ?? 1;
 
         $criarUsuario = function($name, $email, $cpf, $telefone) use ($senhaHash, $regimeId, $now) {
