@@ -20,7 +20,7 @@ class AuthController extends Controller
     public function login(LoginRequest $request)
     {
         $credentials = $request->validated();
-        $user = User::where('email', $credentials['email'])->first();
+        $user = User::with(['setores', 'polosAdministrados'])->where('email', $credentials['email'])->first();
 
         if (!$user || !Hash::check($credentials['password'], $user->password)) {
             return response()->json([

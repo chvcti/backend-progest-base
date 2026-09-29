@@ -181,14 +181,10 @@ class DemonstracaoSistemaSeeder extends Seeder
         $userAlmoxHap       = $criarUsuario('ALMOXARIFE CENTRAL HAP', 'almoxarife.hap@progest.teste', '44444444444', '77999990004');
         $userSolicHap       = $criarUsuario('SOLICITANTE CLÍNICA HAP', 'solicitante.hap@progest.teste', '55555555555', '77999990005');
 
-        // Vínculos de polos
+        // Vínculos de polos (Apenas Administradores de Polo possuem registro em usuario_polo)
         $vinculosPolos = [
             [$userAdminGeral->id, $hgvc->id],
             [$userAdminGeral->id, $hap->id],
-            [$userAlmoxCaf->id, $hgvc->id],
-            [$userSolicUti->id, $hgvc->id],
-            [$userAlmoxHap->id, $hap->id],
-            [$userSolicHap->id, $hap->id],
         ];
         foreach ($vinculosPolos as [$uId, $pId]) {
             DB::table('usuario_polo')->updateOrInsert(
