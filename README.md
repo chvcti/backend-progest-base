@@ -53,6 +53,12 @@ O Laravel e seus pacotes de Excel exigem extensões que vêm desativadas por pad
      ```bash
      php artisan db:seed --class=DemonstracaoSistemaSeeder
      ```
+     *Usuários demo criados (senha padrão `Admin123` via `USER_DEFAULT_PASSWORD`):*
+     - `admin.geral@progest.teste` (Admin - CAF e Polos)
+     - `almoxarife.caf@progest.teste` (Almoxarife CAF / HGVC)
+     - `solicitante.uti@progest.teste` (Solicitante UTI Adulto / HGVC)
+     - `almoxarife.hap@progest.teste` (Almoxarife Central / HAP)
+     - `solicitante.hap@progest.teste` (Solicitante Clínica / HAP)
 
 8. **Inicie o servidor:**
    ```bash
@@ -139,6 +145,11 @@ Ideal para simular o ambiente de produção com domínios reais e Proxy Reverso.
 
   * **Causa:** O Laravel envia cookies (Sessão e CSRF) com a flag de segurança `Secure` quando as variáveis de URL no `.env` começam com `https://`. Se o seu Traefik ou Docker local estiver usando HTTP (porta 80 sem certificado SSL), o navegador descarta silenciosamente esses cookies "Secure", o que impede o login no Frontend e causa a rejeição do token CSRF.
   * **Solução:** No arquivo `.env.docker.local` (ou no seu `.env` local principal), altere o protocolo das variáveis `APP_URL` e `FRONTEND_URL` de `https://` para `http://`. Em seguida, limpe os cookies do navegador e tente novamente.
+
+### ❌ Erro: `429 Too Many Requests` ao navegar rapidamente
+
+  * **Causa:** O middleware de *Rate Limiting* do Laravel bloqueou requisições que excederam a cota por minuto configurada para a API.
+  * **Solução:** No seu arquivo `.env` (ou `.env.docker.local`), aumente a variável `API_RATE_LIMIT=300` (ou `600`) para ambientes locais e de homologação hospitalar.
 
 ---
 

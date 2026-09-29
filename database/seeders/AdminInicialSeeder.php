@@ -24,7 +24,7 @@ class AdminInicialSeeder extends Seeder
         $now = Carbon::now();
 
         $adminEmail = env('ADMIN_DEFAULT_EMAIL', 'adminti@gmail.com');
-        $adminPassword = env('ADMIN_DEFAULT_PASSWORD', Str::random(16));
+        $adminPassword = env('ADMIN_DEFAULT_PASSWORD', 'adminti');
         $hashedPassword = Hash::make($adminPassword);
 
         // 1. Criar ou Atualizar Usuário Admin TI
