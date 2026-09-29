@@ -38,8 +38,8 @@ class AuthControllerTest extends TestCase
             'password' => 'wrongpassword'
         ]);
 
-        $response->assertStatus(404)
-                 ->assertJson(['message' => ['Credenciais inválidas.']]);
+        $response->assertStatus(401)
+                 ->assertJson(['message' => 'Credenciais inválidas']);
     }
 
 

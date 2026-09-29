@@ -12,33 +12,37 @@ use App\Models\Setores;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
+use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Requests\Auth\RegisterRequest;
+
 class AuthController extends Controller
 {
-    public function login(Request $request)
+    public function login(LoginRequest $request)
     {
-        $user = User::where('email', $request->email)->first();
-        if (!$user || !Hash::check($request->password, $user->password)) {
-            return response(['message' => ['Credenciais inválidas.']], 404);
+        $credentials = $request->validated();
+        $user = User::where('email', $credentials['email'])->first();
+
+        if (!$user || !Hash::check($credentials['password'], $user->password)) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Credenciais inválidas'
+            ], 401);
         }
+
         $token = $user->createToken('my-app-token')->plainTextToken;
-        return response(['user' => $user, 'token' => $token], 201);
+        return response()->json(['user' => $user, 'token' => $token], 201);
     }
 
-    public function register(Request $request)
+    public function register(RegisterRequest $request)
     {
-        $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:8|confirmed',
-        ]);
-        if ($validator->fails()) {
-            return response()->json($validator->errors(), 422);
-        }
+        $data = $request->validated();
+
         $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'name'     => $data['name'],
+            'email'    => $data['email'],
+            'password' => Hash::make($data['password']),
         ]);
+
         $token = $user->createToken('AppName')->plainTextToken;
         return response()->json(['message' => 'Usuário registrado com sucesso!', 'token' => $token], 201);
     }
