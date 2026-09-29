@@ -8,11 +8,12 @@ use App\Models\EstoqueLote;
 use App\Models\ItensEntrada;
 use App\Models\Produto;
 use App\Models\Setores;
+use App\Http\Requests\StoreEntradaRequest;
+use App\Http\Requests\UpdateEntradaRequest;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 
 class EntradaController extends Controller
 {
@@ -33,7 +34,7 @@ class EntradaController extends Controller
     /**
      * Registrar uma nova entrada de produtos no estoque do setor.
      */
-    public function add(Request $request)
+    public function add(StoreEntradaRequest $request)
     {
         $user = auth()->user();
         if (!$user || !$user->isAdmin()) {
@@ -43,49 +44,7 @@ class EntradaController extends Controller
             ], 403);
         }
 
-        $data = $request->all();
-
-        $validator = Validator::make($data, [
-            'nota_fiscal' => 'required|string|max:255',
-            'setor_id' => 'required|exists:setores,id',
-            'fornecedor_id' => 'required|exists:fornecedores,id',
-            'itens' => 'required|array|min:1',
-            'itens.*.produto_id' => 'required|exists:produtos,id',
-            'itens.*.quantidade' => 'required|integer|min:1',
-            'itens.*.valor_unitario' => 'nullable|numeric|min:0',
-            'itens.*.lote' => 'required|string|max:50',
-            'itens.*.data_vencimento' => 'required|date|after:today',
-            'itens.*.data_fabricacao' => 'nullable|date|before_or_equal:today',
-        ], [
-            'nota_fiscal.required' => 'A nota fiscal é obrigatória.',
-            'setor_id.required' => 'O setor é obrigatório.',
-            'setor_id.exists' => 'Setor não encontrado.',
-            'fornecedor_id.required' => 'O fornecedor é obrigatório.',
-            'fornecedor_id.exists' => 'Fornecedor não encontrado.',
-            'itens.required' => 'Informe ao menos um item para a entrada.',
-            'itens.array' => 'A lista de itens deve ser um array.',
-            'itens.min' => 'Informe ao menos um item para a entrada.',
-            'itens.*.produto_id.required' => 'Produto é obrigatório em todos os itens.',
-            'itens.*.produto_id.exists' => 'Produto informado não foi encontrado.',
-            'itens.*.quantidade.required' => 'Quantidade é obrigatória em todos os itens.',
-            'itens.*.quantidade.integer' => 'Quantidade deve ser um número inteiro.',
-            'itens.*.quantidade.min' => 'Quantidade deve ser ao menos 1.',
-            'itens.*.lote.required' => 'O lote é obrigatório em todos os itens.',
-            'itens.*.lote.max' => 'O lote deve ter no máximo 50 caracteres.',
-            'itens.*.data_vencimento.required' => 'A data de vencimento é obrigatória.',
-            'itens.*.data_vencimento.date' => 'A data de vencimento deve ser uma data válida.',
-            'itens.*.data_vencimento.after' => 'A data de vencimento deve ser posterior à data atual.',
-            'itens.*.data_fabricacao.date' => 'A data de fabricação deve ser uma data válida.',
-            'itens.*.data_fabricacao.before_or_equal' => 'A data de fabricação não pode ser futura.',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'validacao' => true,
-                'erros' => $validator->errors()
-            ], 422);
-        }
+        $data = $request->validated();
 
         $setor = Setores::find($data['setor_id']);
 
@@ -203,7 +162,7 @@ class EntradaController extends Controller
         }
     }
 
-    public function store(Request $request)
+    public function store(StoreEntradaRequest $request)
     {
         return $this->add($request);
     }
@@ -296,7 +255,7 @@ class EntradaController extends Controller
     /**
      * Atualizar uma entrada existente e seus itens ajustando o estoque
      */
-    public function update(Request $request)
+    public function update(UpdateEntradaRequest $request)
     {
         $user = auth()->user();
         if (!$user || !$user->isAdmin()) {
@@ -306,28 +265,7 @@ class EntradaController extends Controller
             ], 403);
         }
 
-        $data = $request->all();
-
-        $validator = Validator::make($data, [
-            'id' => 'required|exists:entrada,id',
-            'nota_fiscal' => 'required|string|max:255',
-            'setor_id' => 'required|exists:setores,id',
-            'fornecedor_id' => 'required|exists:fornecedores,id',
-            'itens' => 'required|array|min:1',
-            'itens.*.produto_id' => 'required|exists:produtos,id',
-            'itens.*.quantidade' => 'required|integer|min:1',
-            'itens.*.lote' => 'required|string|max:50',
-            'itens.*.data_vencimento' => 'required|date|after:today',
-            'itens.*.data_fabricacao' => 'nullable|date|before_or_equal:today',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'validacao' => true,
-                'erros' => $validator->errors()
-            ], 422);
-        }
+        $data = $request->validated();
 
         $entrada = Entrada::with(['itens'])->find($data['id']);
         $setor = Setores::find($data['setor_id']);
