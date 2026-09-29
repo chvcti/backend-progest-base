@@ -7,6 +7,8 @@ use App\Models\EstoqueLote;
 use App\Models\Setores;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use App\Http\Requests\Estoque\UpdateQuantidadeMinimaRequest;
+use App\Http\Requests\Estoque\UpdateStatusRequest;
 
 class EstoqueController extends Controller
 {
@@ -135,10 +137,10 @@ class EstoqueController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error($e->getMessage());
             return response()->json([
                 'status'  => false,
-                'message' => 'Erro ao buscar estoque.',
-                'error'   => $e->getMessage()
+                'message' => 'Erro ao buscar estoque. Ocorreu uma falha interna.',
             ], 500);
         }
     }
@@ -181,10 +183,10 @@ class EstoqueController extends Controller
                 ]
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error($e->getMessage());
             return response()->json([
                 'status'  => false,
-                'message' => 'Erro ao buscar item do estoque.',
-                'error'   => $e->getMessage()
+                'message' => 'Erro ao buscar item do estoque. Ocorreu uma falha interna.',
             ], 500);
         }
     }
@@ -196,13 +198,9 @@ class EstoqueController extends Controller
      * @param int $id
      * @return JsonResponse
      */
-    public function atualizarQuantidadeMinima(Request $request, $id): JsonResponse
+    public function atualizarQuantidadeMinima(UpdateQuantidadeMinimaRequest $request, $id): JsonResponse
     {
         try {
-            $request->validate([
-                'quantidade_minima' => 'required|integer|min:0'
-            ]);
-
             $estoque = Estoque::find($id);
 
             if (!$estoque) {
@@ -212,8 +210,9 @@ class EstoqueController extends Controller
                 ], 404);
             }
 
+            $data = $request->validated();
             $estoque->update([
-                'quantidade_minima' => $request->quantidade_minima
+                'quantidade_minima' => $data['quantidade_minima']
             ]);
 
             return response()->json([
@@ -222,10 +221,10 @@ class EstoqueController extends Controller
                 'data'    => $estoque
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error($e->getMessage());
             return response()->json([
                 'status'  => false,
-                'message' => 'Erro ao atualizar quantidade mínima.',
-                'error'   => $e->getMessage()
+                'message' => 'Erro ao atualizar quantidade mínima. Ocorreu uma falha interna.',
             ], 500);
         }
     }
@@ -237,13 +236,9 @@ class EstoqueController extends Controller
      * @param int $id
      * @return JsonResponse
      */
-    public function atualizarStatus(Request $request, $id): JsonResponse
+    public function atualizarStatus(UpdateStatusRequest $request, $id): JsonResponse
     {
         try {
-            $request->validate([
-                'status_disponibilidade' => 'required|in:D,I'
-            ]);
-
             $estoque = Estoque::find($id);
 
             if (!$estoque) {
@@ -253,8 +248,9 @@ class EstoqueController extends Controller
                 ], 404);
             }
 
+            $data = $request->validated();
             $estoque->update([
-                'status_disponibilidade' => $request->status_disponibilidade
+                'status_disponibilidade' => $data['status_disponibilidade']
             ]);
 
             return response()->json([
@@ -263,10 +259,10 @@ class EstoqueController extends Controller
                 'data'    => $estoque
             ]);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error($e->getMessage());
             return response()->json([
                 'status'  => false,
-                'message' => 'Erro ao atualizar status.',
-                'error'   => $e->getMessage()
+                'message' => 'Erro ao atualizar status. Ocorreu uma falha interna.',
             ], 500);
         }
     }

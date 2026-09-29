@@ -7,30 +7,22 @@ use App\Models\Estoque;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
+use App\Http\Requests\Estoque\UpdateQuantidadeLoteRequest;
+use App\Http\Requests\Estoque\ListEstoqueLoteRequest;
 
 class EstoqueLoteController extends Controller
 {
     /**
      * Listar lotes de um estoque específico pelo ID do estoque
      */
-    public function list(Request $request)
+    public function list(ListEstoqueLoteRequest $request)
     {
         try {
-            $validator = Validator::make($request->all(), [
-                'estoque_id' => 'required|exists:estoque,id',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => false,
-                    'validacao' => true,
-                    'erros' => $validator->errors()
-                ], 422);
-            }
+            $validated = $request->validated();
+            $estoqueId = $validated['estoque_id'];
 
             // Buscar o estoque para pegar produto_id e setor_id
-            $estoque = Estoque::with('setor')->find($request->estoque_id);
+            $estoque = Estoque::with('setor')->find($estoqueId);
             if (!$estoque) {
                 return response()->json([
                     'status' => false,
@@ -93,27 +85,16 @@ class EstoqueLoteController extends Controller
     /**
      * Atualizar quantidade disponível de um lote específico
      */
-    public function updateQuantidade(Request $request)
+    public function updateQuantidade(UpdateQuantidadeLoteRequest $request)
     {
         try {
-            $validator = Validator::make($request->all(), [
-                'id' => 'required|exists:estoque_lote,id',
-                'quantidade_disponivel' => 'required|numeric|min:0',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => false,
-                    'validacao' => true,
-                    'erros' => $validator->errors()
-                ], 422);
-            }
+            $data = $request->validated();
 
             // Lote e saldo agregado precisam mudar juntos, senão ficam divergentes.
-            $resultado = DB::transaction(function () use ($request) {
-                $lote = EstoqueLote::where('id', $request->id)->lockForUpdate()->first();
+            $resultado = DB::transaction(function () use ($data) {
+                $lote = EstoqueLote::where('id', $data['id'])->lockForUpdate()->first();
                 $quantidadeAnterior = $lote->quantidade_disponivel;
-                $diferenca = $request->quantidade_disponivel - $quantidadeAnterior;
+                $diferenca = $data['quantidade_disponivel'] - $quantidadeAnterior;
 
                 $estoque = Estoque::where('produto_id', $lote->produto_id)
                     ->where('setor_id', $lote->setor_id)
@@ -130,7 +111,7 @@ class EstoqueLoteController extends Controller
                     ];
                 }
 
-                $lote->quantidade_disponivel = $request->quantidade_disponivel;
+                $lote->quantidade_disponivel = $data['quantidade_disponivel'];
                 $lote->save();
 
                 if ($estoque) {

@@ -8,59 +8,25 @@ use App\Models\ItemMovimentacao;
 use App\Models\Estoque;
 use App\Models\EstoqueLote;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
+use App\Services\EstoqueService;
+use App\Http\Requests\StoreMovimentacaoRequest;
+use App\Http\Requests\Movimentacao\ProcessMovimentacaoRequest;
+use App\Http\Requests\Movimentacao\UpdateRascunhoRequest;
+use App\Http\Requests\Movimentacao\ConsumoInternoRequest;
+use App\Http\Requests\Movimentacao\DevolverRequest;
 
 class MovimentacaoController extends Controller
 {
-    // Criar movimentação (pode ser rascunho ou pendente)
-    public function store(Request $request)
+    public function __construct(protected EstoqueService $estoqueService)
     {
-        $userId = auth()->id() ?: $request->input('usuario_id');
-        $data = $request->only(['usuario_id', 'setor_origem_id', 'setor_destino_id', 'tipo', 'observacao', 'status_solicitacao', 'itens']);
-        if ($userId) {
-            $data['usuario_id'] = $userId;
-        }
+    }
 
-        // Normalizar itens: aceitar `quantidade` do front e mapear para `quantidade_solicitada`
-        if (!empty($data['itens']) && is_array($data['itens'])) {
-            foreach ($data['itens'] as $k => $it) {
-                // mapear aliases comuns
-                if (isset($it['quantidade']) && !isset($it['quantidade_solicitada'])) {
-                    $data['itens'][$k]['quantidade_solicitada'] = $it['quantidade'];
-                }
-                if (isset($it['produtoId']) && !isset($it['produto_id'])) {
-                    $data['itens'][$k]['produto_id'] = $it['produtoId'];
-                }
-            }
-        }
-
-        // Rascunho (status 'C') pode ser salvo sem itens; movimentações pendentes/
-        // aprovadas exigem ao menos um item para não gerar transferência fantasma.
-        $isRascunho = ($data['status_solicitacao'] ?? 'P') === 'C';
-        $itensRules = $isRascunho ? ['nullable', 'array'] : ['required', 'array', 'min:1'];
-        $qtdRule = ($data['tipo'] ?? '') === 'D'
-            ? 'required_with:itens|integer|min:1'
-            : 'required_with:itens|numeric|min:0.0001';
-
-        // Tarefa 1: Pendente de mover para um MovimentacaoRequest no futuro
-        $validator = Validator::make($data, [
-            'usuario_id' => 'required|integer|exists:users,id',
-            'tipo' => 'required|in:T,D,S',
-            // Uma movimentação nasce como rascunho (C) ou pendente (P). Aprovar/reprovar
-            // é exclusivo do process(), que é quem movimenta estoque e lotes — deixar
-            // criar já como 'A' registraria uma saída que nunca aconteceu.
-            'status_solicitacao' => 'nullable|in:P,C',
-            'setor_origem_id' => 'nullable|integer|exists:setores,id',
-            'setor_destino_id' => 'nullable|integer|exists:setores,id',
-            'itens' => $itensRules,
-            'itens.*.produto_id' => 'required_with:itens|integer|exists:produtos,id',
-            'itens.*.quantidade_solicitada' => $qtdRule
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
-        }
+    // Criar movimentação (pode ser rascunho ou pendente)
+    public function store(StoreMovimentacaoRequest $request)
+    {
+        // $data já contém todos os campos validados, limpos e com chaves em snake_case!
+        $data = $request->validated();
 
         // Validações de Regras de Negócio de Distribuição e Estoque
         if (in_array($data['tipo'] ?? '', ['S', 'T'])) {
@@ -150,7 +116,7 @@ class MovimentacaoController extends Controller
             return response()->json(['status' => true, 'data' => $mov], 201);
         } catch (\Exception $e) {
             Log::error('Erro criando movimentação: ' . $e->getMessage(), ['exception' => $e]);
-            return response()->json(['status' => false, 'message' => 'Erro ao criar movimentação', 'detail' => $e->getMessage()], 500);
+            return response()->json(['status' => false, 'message' => 'Erro ao criar movimentação. Ocorreu uma falha interna.'], 500);
         }
     }
 
@@ -404,49 +370,23 @@ class MovimentacaoController extends Controller
     }
 
     // Processar movimentação: aprovar, reprovar, ou mover rascunho->pendente
-    public function process(Request $request, $id)
+    public function process(ProcessMovimentacaoRequest $request, $id)
     {
         $mov = Movimentacao::with('itens.produto')->find($id);
         if (!$mov) return response()->json(['status' => false, 'message' => 'Movimentação não encontrada'], 404);
 
-        $action = $request->input('action');
-        if (!$action && $request->has('status')) {
-            $statusMap = [
-                'A' => 'approve',
-                'R' => 'reject',
-                'P' => 'submit',
-                'X' => 'cancel'
-            ];
-            $status = $request->input('status');
-            $action = $statusMap[$status] ?? null;
-        }
-
-        $aprovadorId = $request->input('aprovador_usuario_id') ?? $request->input('usuario_id') ?? auth()->id();
-        $itens = $request->input('itens'); // array de itens com quantidade_liberada ajustada
-
-        if (!in_array($action, ['approve', 'reject', 'submit', 'cancel'])) {
-            return response()->json(['status' => false, 'message' => "action inválida: '$action'"], 422);
-        }
+        $validated = $request->validated();
+        $action = $validated['action'];
+        $aprovadorId = $validated['aprovador_usuario_id'] ?? $validated['usuario_id'] ?? auth()->id();
+        $itens = $validated['itens'] ?? $request->input('itens');
 
         $user = auth()->user();
         if (!$user->isSuperAdmin()) {
             $isDevolucao = ($mov->tipo === 'D');
 
             if (in_array($action, ['approve', 'reject'])) {
-                // Em devoluções (D), quem aprova/reprova é o setor de destino (que recebe o item de volta)
-                // Em transferências (T, S), quem aprova é o setor de origem (fornecedor)
-                $setorAprovadorId = $isDevolucao ? $mov->setor_destino_id : $mov->setor_origem_id;
-
-                $podeAprovar = \Illuminate\Support\Facades\DB::table('usuario_setor')
-                    ->where('usuario_id', $user->id)
-                    ->where('setor_id', $setorAprovadorId)
-                    ->whereIn('perfil', ['admin', 'almoxarife'])
-                    ->exists();
-                
-                if (!$podeAprovar) {
-                    $papel = $isDevolucao ? 'do setor receptor da devolução' : 'do setor fornecedor';
-                    return response()->json(['status' => false, 'message' => "Permissão negada. Apenas administradores ou almoxarifes {$papel} podem aprovar ou reprovar pedidos."], 403);
-                }
+                // A autorização (Policy) assume o controle e lança 403 AccessDeniedHttpException automaticamente caso falhe.
+                $this->authorize('processar', $mov);
             } elseif (in_array($action, ['submit', 'cancel'])) {
                 // Em devoluções (D), quem envia ou cancela é o setor de origem (devolvente)
                 // Em transferências (T, S), quem envia ou cancela é o setor de destino (solicitante)
@@ -535,6 +475,29 @@ class MovimentacaoController extends Controller
                     ], 422));
                 }
 
+                // --- INÍCIO: Lock Ordenado em Lote para Prevenir Deadlocks ---
+                $produtosIds = $mov->itens->pluck('produto_id')->unique()->toArray();
+                $setoresIds = array_filter([$mov->setor_origem_id, $mov->setor_destino_id]);
+
+                // 1. Extrair os IDs dos estoques envolvidos e 2. Ordenar
+                $estoquesIds = Estoque::whereIn('produto_id', $produtosIds)
+                    ->whereIn('setor_id', $setoresIds)
+                    ->pluck('id')
+                    ->sort()
+                    ->values()
+                    ->toArray();
+
+                // 3. Bloquear todos os registros ordenados de uma só vez e
+                // 4. Indexar a collection pela chave composta setorId_produtoId para acesso rápido
+                $estoquesBloqueados = Estoque::whereIn('id', $estoquesIds)
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy(function ($estoque) {
+                        return $estoque->setor_id . '_' . $estoque->produto_id;
+                    });
+                // --- FIM: Lock Ordenado em Lote ---
+
                 // Validar estoque da origem antes de aprovar
                 $errosEstoque = [];
                 foreach ($mov->itens as $item) {
@@ -564,14 +527,8 @@ class MovimentacaoController extends Controller
                         continue;
                     }
 
-                    // Buscar estoque do produto na origem
-                    // LOCK FOR UPDATE! 
-                    // Se outro processo tentar aprovar no mesmo milissegundo, ele será forçado 
-                    // a esperar esta transação terminar antes de conseguir ler o stock.
-                    $estoqueOrigem = Estoque::where('produto_id', $item->produto_id)
-                        ->where('setor_id', $mov->setor_origem_id)
-                        ->lockForUpdate() 
-                        ->first();
+                    // Buscar estoque do produto na origem já bloqueado em memória
+                    $estoqueOrigem = $estoquesBloqueados->get($mov->setor_origem_id . '_' . $item->produto_id);
  
                     if (!$estoqueOrigem) {
                         $nomeProduto = $item->produto?->nome ?? "ID {$item->produto_id}";
@@ -648,18 +605,20 @@ class MovimentacaoController extends Controller
 
                     // 1. DEDUZIR do estoque de ORIGEM (apenas se a origem controlar estoque físico)
                     if (!$isDevolucao || $origemControlaEstoque) {
-                        $estoqueOrigem = Estoque::where('produto_id', $item->produto_id)
-                            ->where('setor_id', $mov->setor_origem_id)
-                            ->lockForUpdate()
-                            ->first();
+                        $estoqueOrigem = $estoquesBloqueados->get($mov->setor_origem_id . '_' . $item->produto_id);
 
                         if (!$estoqueOrigem) {
                             throw new \Exception("Estoque de origem não encontrado para produto {$item->produto_id} no setor {$mov->setor_origem_id}");
                         }
 
-                        $estoqueOrigem->quantidade_atual -= $qtdLiberar;
-                        $estoqueOrigem->status_disponibilidade = $estoqueOrigem->quantidade_atual > 0 ? 'D' : 'I';
-                        $estoqueOrigem->save();
+                        $estoqueOrigem = $this->estoqueService->registrarMovimentacaoContabil(
+                            $estoqueOrigem->id,
+                            -$qtdLiberar, // Quantidade negativa (Saída/Baixa)
+                            $isDevolucao ? 'saida' : 'transferencia',
+                            $aprovadorId,
+                            $mov->id,
+                            'Baixa de itens'
+                        );
 
                         Log::info("Estoque origem atualizado", [
                             'estoque_id' => $estoqueOrigem->id,
@@ -681,24 +640,26 @@ class MovimentacaoController extends Controller
                     // 2. INCREMENTAR o estoque de DESTINO
                     // Se for devolução de setor sem estoque físico, criamos/incrementamos o lote no destino
                     if ($isDevolucao && !$origemControlaEstoque) {
-                        $estoqueDestino = Estoque::where('produto_id', $item->produto_id)
-                            ->where('setor_id', $mov->setor_destino_id)
-                            ->lockForUpdate()
-                            ->first();
+                        $estoqueDestino = $estoquesBloqueados->get($mov->setor_destino_id . '_' . $item->produto_id);
 
                         if (!$estoqueDestino) {
                             $estoqueDestino = Estoque::create([
                                 'produto_id' => $item->produto_id,
                                 'setor_id' => $mov->setor_destino_id,
-                                'quantidade_atual' => $qtdLiberar,
+                                'quantidade_atual' => 0, // Inicia zerado para que o Service controle a entrada
                                 'quantidade_minima' => 0,
-                                'status_disponibilidade' => 'D'
+                                'status_disponibilidade' => 'I'
                             ]);
-                        } else {
-                            $estoqueDestino->quantidade_atual += $qtdLiberar;
-                            $estoqueDestino->status_disponibilidade = 'D';
-                            $estoqueDestino->save();
                         }
+                        
+                        $estoqueDestino = $this->estoqueService->registrarMovimentacaoContabil(
+                            $estoqueDestino->id,
+                            $qtdLiberar, // Quantidade positiva (Entrada)
+                            $isDevolucao ? 'entrada' : 'transferencia',
+                            $aprovadorId,
+                            $mov->id,
+                            'Recebimento de itens'
+                        );
 
                         // Lotes na Devolução: se informado lote pelo solicitante, usamos ele;
                         // caso contrário, incorporamos ao lote vigente mais recente do destino ou criamos lote de devolução
@@ -757,10 +718,7 @@ class MovimentacaoController extends Controller
                         // Transferência normal ou devolução de setor COM estoque:
                         // transferirLotesFifo já incrementou o lote do destino se havia lotes.
                         // Atualizamos o saldo agregado de Estoque do destino:
-                        $estoqueDestino = Estoque::where('produto_id', $item->produto_id)
-                            ->where('setor_id', $mov->setor_destino_id)
-                            ->lockForUpdate()
-                            ->first();
+                        $estoqueDestino = $estoquesBloqueados->get($mov->setor_destino_id . '_' . $item->produto_id);
 
                         if (!$estoqueDestino) {
                             Log::info("Criando novo estoque de destino", [
@@ -771,15 +729,20 @@ class MovimentacaoController extends Controller
                             $estoqueDestino = Estoque::create([
                                 'produto_id' => $item->produto_id,
                                 'setor_id' => $mov->setor_destino_id,
-                                'quantidade_atual' => $qtdLiberar,
+                                'quantidade_atual' => 0, // Inicia zerado
                                 'quantidade_minima' => 0,
-                                'status_disponibilidade' => 'D'
+                                'status_disponibilidade' => 'I'
                             ]);
-                        } else {
-                            $estoqueDestino->quantidade_atual += $qtdLiberar;
-                            $estoqueDestino->status_disponibilidade = 'D';
-                            $estoqueDestino->save();
                         }
+                        
+                        $estoqueDestino = $this->estoqueService->registrarMovimentacaoContabil(
+                            $estoqueDestino->id,
+                            $qtdLiberar, // Quantidade positiva (Entrada)
+                            $isDevolucao ? 'entrada' : 'transferencia',
+                            $aprovadorId,
+                            $mov->id,
+                            'Recebimento de itens'
+                        );
                     }
                 }
 
@@ -863,13 +826,13 @@ class MovimentacaoController extends Controller
         return response()->json(['status' => true]);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateRascunhoRequest $request, $id)
     {
         return $this->updateRascunho($request, $id);
     }
 
     // Atualizar rascunho (apenas movimentações em rascunho podem ser editadas)
-    public function updateRascunho(Request $request, $id)
+    public function updateRascunho(UpdateRascunhoRequest $request, $id)
     {
         $mov = Movimentacao::with('itens')->find($id);
         if (!$mov) {
@@ -879,20 +842,7 @@ class MovimentacaoController extends Controller
             return response()->json(['status' => false, 'message' => 'Apenas pedidos em rascunho podem ser editados.'], 422);
         }
 
-        $data = $request->only(['setor_origem_id', 'observacao', 'itens', 'status_solicitacao']);
-
-        $validator = Validator::make($data, [
-            'setor_origem_id'                  => 'nullable|integer|exists:setores,id',
-            'observacao'                       => 'nullable|string',
-            'status_solicitacao'               => 'nullable|in:C,P',
-            'itens'                            => 'required|array|min:1',
-            'itens.*.produto_id'               => 'required|integer|exists:produtos,id',
-            'itens.*.quantidade_solicitada'    => 'required|numeric|min:0.0001',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json(['status' => false, 'message' => $validator->errors()->first()], 422);
-        }
+        $data = $request->validated();
 
         $origemId = $data['setor_origem_id'] ?? $mov->setor_origem_id;
         $destinoId = $mov->setor_destino_id;
@@ -957,7 +907,7 @@ class MovimentacaoController extends Controller
             return response()->json(['status' => true, 'data' => $mov->fresh('itens.produto', 'setorOrigem', 'setorDestino')]);
         } catch (\Exception $e) {
             Log::error('Erro ao atualizar rascunho/pendente: ' . $e->getMessage());
-            return response()->json(['status' => false, 'message' => 'Erro ao atualizar pedido', 'detail' => $e->getMessage()], 500);
+            return response()->json(['status' => false, 'message' => 'Erro ao atualizar pedido. Ocorreu uma falha interna.'], 500);
         }
     }
 
@@ -1163,26 +1113,12 @@ class MovimentacaoController extends Controller
 
         return $lotesConsumidos;
     }
-    public function consumoInterno(Request $request)
+    public function consumoInterno(ConsumoInternoRequest $request)
     {
-        $validated = Validator::make($request->all(), [
-            'produto_id' => 'required|integer',
-            'lote' => 'required|string',
-            'setor_id' => 'required|integer',
-            'quantidade' => 'required|numeric|gt:0',
-            'observacao' => 'nullable|string|max:255'
-        ]);
-
-        if ($validated->fails()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Erros de validação',
-                'erros' => $validated->errors()
-            ], 422);
-        }
+        $data = $request->validated();
 
         $userId = auth()->id();
-        $setorId = $request->input('setor_id');
+        $setorId = $data['setor_id'];
         
         $hasAccess = DB::table('usuario_setor')
             ->where('usuario_id', $userId)
@@ -1196,10 +1132,10 @@ class MovimentacaoController extends Controller
             ], 403);
         }
 
-        $produtoId = $request->input('produto_id');
-        $lote = $request->input('lote');
-        $qtdConsumir = intval($request->input('quantidade'));
-        $observacao = $request->input('observacao');
+        $produtoId = $data['produto_id'];
+        $lote = $data['lote'];
+        $qtdConsumir = intval($data['quantidade']);
+        $observacao = $data['observacao'] ?? null;
 
         try {
             DB::beginTransaction();
@@ -1281,40 +1217,26 @@ class MovimentacaoController extends Controller
             ], 500);
         }
     }
-    public function devolver(Request $request, $id)
+    public function devolver(DevolverRequest $request, $id)
     {
+        $data = $request->validated();
+
         // 1. Fluxo de devolução direta por lote individual
         if (!$request->has('itens')) {
-            $validated = Validator::make($request->all(), [
-                'item_movimentacao_id' => 'required|integer',
-                'quantidade' => 'required|integer|min:1',
-                'lote' => 'required|string',
-                'motivo' => 'nullable|string|max:255'
-            ]);
-
-            if ($validated->fails()) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Erros de validação',
-                    'erros' => $validated->errors(),
-                    'errors' => $validated->errors()
-                ], 422);
-            }
-
             $movimentacao = Movimentacao::with('itens')->find($id);
             if (!$movimentacao) {
                 return response()->json(['status' => false, 'message' => 'Movimentação não encontrada.'], 404);
             }
 
-            $itemMov = $movimentacao->itens->where('id', $request->input('item_movimentacao_id'))->first();
+            $itemMov = $movimentacao->itens->where('id', $data['item_movimentacao_id'])->first();
             if (!$itemMov) {
                 return response()->json(['status' => false, 'message' => 'Item não pertence a esta movimentação.'], 422);
             }
 
-            $quantidadeADevolver = (int) $request->input('quantidade');
-            $loteNome = $request->input('lote');
+            $quantidadeADevolver = (int) $data['quantidade'];
+            $loteNome = $data['lote'];
             $userId = auth()->id() ?: ($movimentacao->usuario_id ?? null);
-            $motivo = $request->input('motivo');
+            $motivo = $data['motivo'] ?? null;
 
             $lotesOriginal = json_decode($itemMov->lote, true);
             if (!is_array($lotesOriginal)) {
@@ -1413,24 +1335,8 @@ class MovimentacaoController extends Controller
         }
 
         // 2. Fluxo de devolução múltipla (em lote de itens do pedido)
-        $validated = Validator::make($request->all(), [
-            'motivo' => 'nullable|string|max:255',
-            'itens' => 'required|array|min:1',
-            'itens.*.item_movimentacao_id' => 'required|integer',
-            'itens.*.quantidade_devolvendo' => 'required|integer|min:0',
-        ]);
-
-        if ($validated->fails()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Erros de validação',
-                'erros' => $validated->errors(),
-                'errors' => $validated->errors()
-            ], 422);
-        }
-
         // Filtrar apenas itens com quantidade_devolvendo > 0
-        $itensParaDevolver = array_filter($request->input('itens'), function ($reqItem) {
+        $itensParaDevolver = array_filter($data['itens'] ?? [], function ($reqItem) {
             return isset($reqItem['quantidade_devolvendo']) && (int) $reqItem['quantidade_devolvendo'] > 0;
         });
 
