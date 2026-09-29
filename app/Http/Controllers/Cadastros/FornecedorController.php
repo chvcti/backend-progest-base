@@ -118,8 +118,7 @@ class FornecedorController
     public function listData(Request $request)
     {
         try {
-            $data = $request->all();
-            $id = $data['id'];
+            $id = $request->input('id');
 
             if (!$id) {
                 return response()->json([

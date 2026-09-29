@@ -7,26 +7,18 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use App\Models\Setores;
 use App\Models\User;
-use Illuminate\Support\Facades\Validator;
-
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Http\Requests\Setores\StoreSetorRequest;
+use App\Http\Requests\Setores\UpdateSetorRequest;
+use App\Http\Requests\Setores\AddDistribuidorRequest;
 
 class SetoresController
 {
-    public function add(Request $request)
+    public function add(StoreSetorRequest $request)
     {
         $data = $request->all();
-
-        // Aceitar tanto 'Setores' quanto 'setores' para compatibilidade
-        $setoresData = $data['Setores'] ?? $data['setores'] ?? null;
-
-        if (!$setoresData) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Dados do setor não informados.'
-            ], 422);
-        }
+        $setoresData = $request->validated();
 
         $user = Auth::user();
         if (!$user) return response()->json(['status' => false, 'message' => 'Não autenticado'], 401);
@@ -34,21 +26,6 @@ class SetoresController
         $poloId = $setoresData['polo_id'] ?? null;
         if (!$user->isSuperAdmin() && !$user->isAdminCaf() && (!$poloId || !$user->isAdminPolo($poloId))) {
             return response()->json(['status' => false, 'message' => 'Apenas admins da CAF ou do Polo podem criar setores.'], 403);
-        }
-
-        $validator = Validator::make($setoresData, [
-            'polo_id'       => 'required|exists:polos,id',
-            'nome'          => 'required|string|max:255',
-            'estoque'       => 'sometimes|boolean',
-            'tipo'          => 'sometimes|in:Medicamento,Material,Ambos',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'validacao' => true,
-                'erros' => $validator->errors()
-            ], 422);
         }
 
         $setor = new Setores;
@@ -66,23 +43,8 @@ class SetoresController
 
             // Se enviar dados de distribuidor junto com a criação do setor
             // Payload opcional: $data['distribuidor'] => ['setor_distribuidor_id' => <id>]
-            if (isset($data['distribuidor']) && is_array($data['distribuidor'])) {
-                $distribuidorData = $data['distribuidor'];
-
-                $validatorDistribuidor = Validator::make($distribuidorData, [
-                    'setor_distribuidor_id' => 'required|exists:setores,id',
-                ]);
-
-                if ($validatorDistribuidor->fails()) {
-                    DB::rollBack();
-                    return response()->json([
-                        'status'   => false,
-                        'validacao' => true,
-                        'erros'    => $validatorDistribuidor->errors()
-                    ], 422);
-                }
-
-                $distribuidorSetorId = $distribuidorData['setor_distribuidor_id'];
+            if (isset($data['distribuidor']) && is_array($data['distribuidor']) && !empty($data['distribuidor']['setor_distribuidor_id'])) {
+                $distribuidorSetorId = $data['distribuidor']['setor_distribuidor_id'];
                 $existe = DB::table('setor_distribuidor')
                     ->where('setor_solicitante_id', $setor->id)
                     ->where('setor_distribuidor_id', $distribuidorSetorId)
@@ -141,9 +103,25 @@ class SetoresController
             });
         }
 
-        foreach ($filters as $condition) {
-            foreach ($condition as $coluna => $valor) {
-                $query->where($coluna, $valor);
+        // Aplicar filtros com Whitelist de Colunas (Proteção SQL Injection)
+        $allowedColumns = ['id', 'polo_id', 'nome', 'descricao', 'status', 'estoque', 'tipo'];
+        foreach ($filters as $key => $condition) {
+            if (is_array($condition)) {
+                foreach ($condition as $coluna => $valor) {
+                    if (in_array($coluna, $allowedColumns, true) && $valor !== null && $valor !== '') {
+                        if (in_array($coluna, ['nome', 'descricao'], true)) {
+                            $query->where($coluna, 'like', '%' . $valor . '%');
+                        } else {
+                            $query->where($coluna, $valor);
+                        }
+                    }
+                }
+            } elseif (in_array($key, $allowedColumns, true) && $condition !== null && $condition !== '') {
+                if (in_array($key, ['nome', 'descricao'], true)) {
+                    $query->where($key, 'like', '%' . $condition . '%');
+                } else {
+                    $query->where($key, $condition);
+                }
             }
         }
 
@@ -163,19 +141,10 @@ class SetoresController
         return ['status' => true, 'data' => $setores];
     }
 
-    public function update(Request $request)
+    public function update(UpdateSetorRequest $request)
     {
         $data = $request->all();
-
-        // Aceitar tanto 'Setores' quanto 'setores' para compatibilidade
-        $setoresData = $data['Setores'] ?? $data['setores'] ?? null;
-
-        if (!$setoresData) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Dados do setor não informados.'
-            ], 422);
-        }
+        $setoresData = $request->validated();
 
         $user = Auth::user();
         if (!$user) return response()->json(['status' => false, 'message' => 'Não autenticado'], 401);
@@ -183,21 +152,6 @@ class SetoresController
         $poloId = $setoresData['polo_id'] ?? null;
         if (!$user->isSuperAdmin() && !$user->isAdminCaf() && (!$poloId || !$user->isAdminPolo($poloId))) {
             return response()->json(['status' => false, 'message' => 'Apenas admins da CAF ou do Polo podem editar setores.'], 403);
-        }
-
-        $validator = Validator::make($setoresData, [
-            'polo_id'       => 'required|exists:polos,id',
-            'nome'          => 'required|string|max:255',
-            'estoque'       => 'sometimes|boolean',
-            'tipo'          => 'sometimes|in:Medicamento,Material,Ambos',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'validacao' => true,
-                'erros' => $validator->errors()
-            ], 422);
         }
 
         $setor = Setores::find($setoresData['id']);
@@ -256,28 +210,18 @@ class SetoresController
 
                 // Criar apenas os novos relacionamentos
                 foreach ($distribuidoresRecebidos as $item) {
-                    $validador = Validator::make($item, [
-                        'setor_distribuidor_id' => 'required|exists:setores,id',
-                    ]);
-
-                    if ($validador->fails()) {
-                        DB::rollBack();
-                        return response()->json([
-                            'status'   => false,
-                            'validacao' => true,
-                            'erros'    => $validador->errors()
-                        ], 422);
-                    }
+                    $distribuidorId = $item['setor_distribuidor_id'] ?? null;
+                    if (!$distribuidorId) continue;
 
                     $existe = DB::table('setor_distribuidor')
                         ->where('setor_solicitante_id', $setor->id)
-                        ->where('setor_distribuidor_id', $item['setor_distribuidor_id'])
+                        ->where('setor_distribuidor_id', $distribuidorId)
                         ->exists();
 
                     if (!$existe) {
                         DB::table('setor_distribuidor')->insert([
                             'setor_solicitante_id'  => $setor->id,
-                            'setor_distribuidor_id' => $item['setor_distribuidor_id'],
+                            'setor_distribuidor_id' => $distribuidorId,
                             'created_at'            => now(),
                             'updated_at'            => now(),
                         ]);
@@ -533,8 +477,14 @@ class SetoresController
 
     public function listData(Request $request)
     {
-        $data = $request->all();
-        $id   = $data['id'];
+        $id = $request->input('id');
+
+        if (!$id) {
+            return response()->json([
+                'status'  => false,
+                'message' => 'ID do setor é obrigatório.'
+            ], 400);
+        }
 
         $setor = Setores::with(['polo', 'distribuidoresRelacionados.distribuidor.polo'])->find($id);
 
@@ -690,23 +640,10 @@ class SetoresController
         }
         return $distribuidores;
     }
-    public function addDistribuidor(Request $request)
+    public function addDistribuidor(AddDistribuidorRequest $request)
     {
         try {
-            $data = $request->all();
-
-            $validator = Validator::make($data, [
-                'setor_solicitante_id' => 'required|exists:setores,id',
-                'setor_distribuidor_id' => 'required|exists:setores,id',
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'status' => false,
-                    'validacao' => true,
-                    'erros' => $validator->errors()
-                ], 422);
-            }
+            $data = $request->validated();
 
             /** @var User|null $user */
             $user = Auth::user();

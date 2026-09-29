@@ -66,15 +66,24 @@ class PoloController
                 });
             }
 
-            // Aplicar filtros
-            foreach ($filters as $condition) {
-                foreach ($condition as $column => $value) {
-                    if ($value !== null && $value !== '') {
-                        if ($column === 'status') {
-                            $query->where($column, $value);
-                        } else {
-                            $query->where($column, 'like', '%' . $value . '%');
+            // Aplicar filtros com Whitelist de Colunas (Proteção SQL Injection)
+            $allowedColumns = ['id', 'nome', 'sigla', 'status'];
+            foreach ($filters as $key => $condition) {
+                if (is_array($condition)) {
+                    foreach ($condition as $column => $value) {
+                        if (in_array($column, $allowedColumns, true) && $value !== null && $value !== '') {
+                            if (in_array($column, ['id', 'status'], true)) {
+                                $query->where($column, $value);
+                            } else {
+                                $query->where($column, 'like', '%' . $value . '%');
+                            }
                         }
+                    }
+                } elseif (in_array($key, $allowedColumns, true) && $condition !== null && $condition !== '') {
+                    if (in_array($key, ['id', 'status'], true)) {
+                        $query->where($key, $condition);
+                    } else {
+                        $query->where($key, 'like', '%' . $condition . '%');
                     }
                 }
             }
