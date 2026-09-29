@@ -19,6 +19,7 @@ use App\Http\Controllers\EntradaController;
 use App\Http\Controllers\UsuarioSetorController;
 use App\Http\Controllers\RelatoriosController;
 use App\Http\Controllers\MovimentacaoController;
+use App\Http\Controllers\DashboardController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -57,6 +58,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('logout', [AuthController::class, 'logout']);
 
     Route::get('countUsers', [UserController::class, 'countUsers']);
+
+    // --------------------------------------------------------
+    // Dashboard (Métricas e Indicadores Agregados)
+    // --------------------------------------------------------
+    Route::match(['get', 'post'], '/dashboard/metrics', [DashboardController::class, 'metrics']);
 
     // --------------------------------------------------------
     // Vínculo usuário ↔ setor
@@ -213,48 +219,48 @@ Route::middleware('auth:sanctum')->group(function () {
     // Relatórios Financeiros
     Route::post('/relatorios/financeiro/entradas',     [RelatoriosController::class, 'listEntradasFinanceiras']);
     Route::post('/relatorios/financeiro/saidas',       [RelatoriosController::class, 'listSaidasFinanceiras']);
+
+    // ============================================================
+    // ROTAS DE LEITURA (AGORA PROTEGIDAS)
+    // ============================================================
+
+    // Setores — leitura (seleção de setor no login)
+    Route::post('/setores/list',     [SetoresController::class, 'listAll']);
+    Route::post('/setores/listData', [SetoresController::class, 'listData']);
+
+    // Produtos — leitura (catálogo de busca)
+    Route::post('/produtos/list',            [ProdutoController::class, 'listAll']);
+    Route::post('/produtos/listData',        [ProdutoController::class, 'listData']);
+    Route::post('/produtos/dadosAuxiliares', [ProdutoController::class, 'getDadosAuxiliares']);
+    Route::post('/produtos/listByTipo',      [ProdutoController::class, 'listByTipo']);
+
+    // Entrada — leitura
+    Route::post('/entrada/list', [EntradaController::class, 'list']);
+
+    // Polo / Unidade — leitura
+    Route::post('/polo/list',         [PoloController::class, 'listAll']);
+    Route::post('/polo/listData',     [PoloController::class, 'listData']);
+    Route::post('/unidade/list',      [PoloController::class, 'listAll']);
+    Route::post('/unidade/listData',  [PoloController::class, 'listData']);
+
+    // Regime de Contratação — leitura (usado no cadastro de usuário)
+    Route::post('/RegimeContratacao/list',     [RegimeContratacaoController::class, 'listAll']);
+    Route::post('/RegimeContratacao/listData', [RegimeContratacaoController::class, 'listData']);
+    Route::post('/regime-contratacao/list',    [RegimeContratacaoController::class, 'listAll']);
+    Route::post('/regime-contratacao/listData',[RegimeContratacaoController::class, 'listData']);
+
+    // Grupo de Produto — leitura
+    Route::post('/grupoProduto/list',     [GrupoProdutoController::class, 'listAll']);
+    Route::post('/grupoProduto/listData', [GrupoProdutoController::class, 'listData']);
+
+    // Fornecedores — leitura
+    Route::post('/fornecedores/list',    [FornecedorController::class, 'listAll']);
+    Route::post('/fornecedores/listData',[FornecedorController::class, 'listData']);
+
+    // Unidade de Medida — leitura
+    Route::post('/unidadeMedida/list',    [UnidadeMedidaController::class, 'listAll']);
+    Route::post('/unidadeMedida/listData',[UnidadeMedidaController::class, 'listData']);
+
 }); // fim middleware auth:sanctum
-
-// ============================================================
-// ROTAS PÚBLICAS DE LEITURA — catálogos acessíveis sem login
-// (usados em formulários de cadastro antes de autenticação)
-// ============================================================
-
-// Setores — leitura pública (seleção de setor no login)
-Route::post('/setores/list',     [SetoresController::class, 'listAll']);
-Route::post('/setores/listData', [SetoresController::class, 'listData']);
-
-// Produtos — leitura pública (catálogo de busca)
-Route::post('/produtos/list',            [ProdutoController::class, 'listAll']);
-Route::post('/produtos/listData',        [ProdutoController::class, 'listData']);
-Route::post('/produtos/dadosAuxiliares', [ProdutoController::class, 'getDadosAuxiliares']);
-Route::post('/produtos/listByTipo',      [ProdutoController::class, 'listByTipo']);
-
-// Entrada — leitura pública
-Route::post('/entrada/list', [EntradaController::class, 'list']);
-
-// Polo / Unidade — leitura pública
-Route::post('/polo/list',         [PoloController::class, 'listAll']);
-Route::post('/polo/listData',     [PoloController::class, 'listData']);
-Route::post('/unidade/list',      [PoloController::class, 'listAll']);
-Route::post('/unidade/listData',  [PoloController::class, 'listData']);
-
-// Regime de Contratação — leitura pública (usado no cadastro de usuário)
-Route::post('/RegimeContratacao/list',     [RegimeContratacaoController::class, 'listAll']);
-Route::post('/RegimeContratacao/listData', [RegimeContratacaoController::class, 'listData']);
-Route::post('/regime-contratacao/list',    [RegimeContratacaoController::class, 'listAll']);
-Route::post('/regime-contratacao/listData',[RegimeContratacaoController::class, 'listData']);
-
-// Grupo de Produto — leitura pública
-Route::post('/grupoProduto/list',     [GrupoProdutoController::class, 'listAll']);
-Route::post('/grupoProduto/listData', [GrupoProdutoController::class, 'listData']);
-
-// Fornecedores — leitura pública
-Route::post('/fornecedores/list',    [FornecedorController::class, 'listAll']);
-Route::post('/fornecedores/listData',[FornecedorController::class, 'listData']);
-
-// Unidade de Medida — leitura pública
-Route::post('/unidadeMedida/list',    [UnidadeMedidaController::class, 'listAll']);
-Route::post('/unidadeMedida/listData',[UnidadeMedidaController::class, 'listData']);
 
 

@@ -727,7 +727,6 @@ class RelatoriosController extends Controller
             $dateTo = $filters['date_to'] ?? $dateFrom;
 
             // Restringir aos setores que o usuário autenticado tem acesso.
-            // Super admin enxerga todos os setores (sem restrição).
             $user = auth()->user();
             $isSuperAdmin = $user->isSuperAdmin();
             $setoresPermitidos = \Illuminate\Support\Facades\DB::table('usuario_setor')
@@ -735,8 +734,8 @@ class RelatoriosController extends Controller
                 ->pluck('setor_id')
                 ->toArray();
 
-            // Query agregada: agrupa por data e produto, soma quantidades
-            // Considera saídas operacionais ('S') e transferências setoriais ('T')
+            // Query agregada UNIFICADA no Banco de Dados (S + T + D)
+            // Abatimento líquido feito no MySQL/PostgreSQL usando agregações condicionais.
             $query = DB::table('item_movimentacao as im')
                 ->join('movimentacao as m', 'im.movimentacao_id', '=', 'm.id')
                 ->join('produtos as p', 'im.produto_id', '=', 'p.id')
@@ -751,11 +750,13 @@ class RelatoriosController extends Controller
                     'um.nome as unidade_medida',
                     'gp.nome as grupo_produto',
                     'gp.tipo as tipo_produto',
-                    DB::raw('SUM(im.quantidade_liberada) as quantidade_total'),
-                    DB::raw('COUNT(DISTINCT m.id) as total_movimentacoes'),
-                    DB::raw('COUNT(DISTINCT m.setor_origem_id) as total_setores')
+                    // Agregação Condicional SQL:
+                    DB::raw("SUM(CASE WHEN m.tipo IN ('S', 'T') THEN im.quantidade_liberada ELSE 0 END) as quantidade_saida_bruta"),
+                    DB::raw("SUM(CASE WHEN m.tipo = 'D' THEN im.quantidade_liberada ELSE 0 END) as quantidade_devolvida"),
+                    DB::raw("SUM(CASE WHEN m.tipo = 'D' THEN -im.quantidade_liberada ELSE im.quantidade_liberada END) as consumo_liquido"),
+                    DB::raw("COUNT(DISTINCT CASE WHEN m.tipo IN ('S', 'T') THEN m.id END) as total_movimentacoes")
                 )
-                ->whereIn('m.tipo', ['S', 'T'])
+                ->whereIn('m.tipo', ['S', 'T', 'D'])
                 ->where('m.status_solicitacao', 'A') // Apenas aprovadas
                 ->whereDate('m.data_hora', '>=', $dateFrom)
                 ->whereDate('m.data_hora', '<=', $dateTo);
@@ -795,7 +796,7 @@ class RelatoriosController extends Controller
                 $query->where('p.id', $filters['produto_id']);
             }
 
-            // Agrupar por data e produto
+            // Agrupar por data e produto - Força o banco a devolver apenas 1 linha sumarizada
             $query->groupBy(
                 DB::raw('DATE(m.data_hora)'),
                 'p.id',
@@ -807,53 +808,15 @@ class RelatoriosController extends Controller
                 'gp.tipo'
             );
 
-            // Buscar todos os resultados com ordenação
-            $results = $query
+            // Buscar resultados PAGINADOS com ordenação por data e volume (Substituindo o memory leak do GET)
+            $paginator = $query
                 ->orderByDesc(DB::raw('DATE(m.data_hora)'))
-                ->orderByDesc(DB::raw('SUM(im.quantidade_liberada)'))
-                ->get();
+                ->orderByDesc('consumo_liquido') 
+                ->paginate(50);
 
-            // Calcular o total de devoluções aprovadas no período (tipo = 'D') para dedução e consumo líquido
-            $devolucoesQuery = DB::table('item_movimentacao as im')
-                ->join('movimentacao as m', 'im.movimentacao_id', '=', 'm.id')
-                ->select(
-                    DB::raw('DATE(m.data_hora) as data'),
-                    'im.produto_id',
-                    DB::raw('SUM(im.quantidade_liberada) as total_devolvido')
-                )
-                ->where('m.tipo', 'D')
-                ->where('m.status_solicitacao', 'A')
-                ->whereDate('m.data_hora', '>=', $dateFrom)
-                ->whereDate('m.data_hora', '<=', $dateTo);
-
-            if (!$isSuperAdmin) {
-                $devolucoesQuery->where(function ($q) use ($setoresPermitidos) {
-                    $q->whereIn('m.setor_origem_id', $setoresPermitidos)
-                      ->orWhereIn('m.setor_destino_id', $setoresPermitidos);
-                });
-            }
-
-            if (!empty($filters['setor_id'])) {
-                $devolucoesQuery->where(function ($q) use ($filters) {
-                    $q->where('m.setor_origem_id', $filters['setor_id'])
-                      ->orWhere('m.setor_destino_id', $filters['setor_id']);
-                });
-            }
-
-            if (!empty($filters['produto_id'])) {
-                $devolucoesQuery->where('im.produto_id', $filters['produto_id']);
-            }
-
-            $devolucoesPorDataProduto = $devolucoesQuery
-                ->groupBy(DB::raw('DATE(m.data_hora)'), 'im.produto_id')
-                ->get()
-                ->keyBy(function($item) {
-                    return $item->data . '-' . $item->produto_id;
-                });
-
-            // Agrupar resultados por data
+            // Estruturar a coleção apenas dos 50 itens desta PÁGINA
             $groupedByDate = [];
-            foreach ($results as $item) {
+            foreach ($paginator->items() as $item) {
                 $data = $item->data;
                 
                 if (!isset($groupedByDate[$data])) {
@@ -861,20 +824,13 @@ class RelatoriosController extends Controller
                         'data' => $data,
                         'produtos' => [],
                         'total_produtos' => 0,
-                        'quantidade_total_dia' => 0,
                         'quantidade_saida_bruta_dia' => 0,
                         'quantidade_devolvida_dia' => 0,
                         'quantidade_liquida_dia' => 0,
                     ];
                 }
-
-                $keyDevolucao = $data . '-' . $item->produto_id;
-                $devolucaoItem = $devolucoesPorDataProduto->get($keyDevolucao);
-                $qtdDevolvida = $devolucaoItem ? (int) $devolucaoItem->total_devolvido : 0;
-                $qtdSaidaBruta = (int) $item->quantidade_total;
-                $qtdLiquida = max(0, $qtdSaidaBruta - $qtdDevolvida);
                 
-                // Buscar movimentações detalhadas (origem e destino) deste produto nesta data
+                // Buscar detalhadas Apenas da PÁGINA: N+1 mitigado de 10k para no máximo 50.
                 $detalhadasQuery = DB::table('item_movimentacao as im')
                     ->join('movimentacao as m', 'im.movimentacao_id', '=', 'm.id')
                     ->join('setores as so', 'm.setor_origem_id', '=', 'so.id')
@@ -892,11 +848,9 @@ class RelatoriosController extends Controller
                     )
                     ->where('im.produto_id', $item->produto_id)
                     ->whereDate('m.data_hora', $data)
-                    ->whereIn('m.tipo', ['S', 'T'])
+                    ->whereIn('m.tipo', ['S', 'T', 'D'])
                     ->where('m.status_solicitacao', 'A');
 
-                // Reaplicar o escopo de setores permitidos também no detalhe,
-                // para não vazar movimentações de setores sem acesso.
                 if (!$isSuperAdmin) {
                     $detalhadasQuery->where(function ($q) use ($setoresPermitidos) {
                         $q->whereIn('m.setor_origem_id', $setoresPermitidos)
@@ -904,9 +858,7 @@ class RelatoriosController extends Controller
                     });
                 }
 
-                $movimentacoesDetalhadas = $detalhadasQuery
-                    ->orderBy('m.data_hora', 'desc')
-                    ->get();
+                $movimentacoesDetalhadas = $detalhadasQuery->orderBy('m.data_hora', 'desc')->get();
                 
                 $groupedByDate[$data]['produtos'][] = [
                     'produto' => [
@@ -918,16 +870,16 @@ class RelatoriosController extends Controller
                         'grupo_produto' => $item->grupo_produto,
                         'tipo' => $item->tipo_produto,
                     ],
-                    'quantidade_saida_bruta' => $qtdSaidaBruta,
-                    'quantidade_devolvida' => $qtdDevolvida,
-                    'quantidade_liquida' => $qtdLiquida,
-                    'quantidade_total' => $qtdLiquida,
+                    'quantidade_saida_bruta' => (float)$item->quantidade_saida_bruta,
+                    'quantidade_devolvida' => (float)$item->quantidade_devolvida,
+                    'quantidade_liquida' => (float)$item->consumo_liquido,
+                    'quantidade_total' => (float)$item->consumo_liquido, // Mantido para retrocompatibilidade do front
                     'total_movimentacoes' => (int) $item->total_movimentacoes,
                     'movimentacoes' => $movimentacoesDetalhadas->map(function($mov) {
                         return [
                             'movimentacao_id' => $mov->movimentacao_id,
                             'tipo' => $mov->tipo,
-                            'tipo_descricao' => $mov->tipo === 'T' ? 'Transferência Setorial' : 'Saída Direta',
+                            'tipo_descricao' => $mov->tipo === 'T' ? 'Transferência Setorial' : ($mov->tipo === 'D' ? 'Devolução' : 'Saída Direta'),
                             'quantidade' => (int) $mov->quantidade,
                             'setor_origem' => [
                                 'id' => $mov->setor_origem_id,
@@ -944,19 +896,18 @@ class RelatoriosController extends Controller
                 ];
                 
                 $groupedByDate[$data]['total_produtos']++;
-                $groupedByDate[$data]['quantidade_saida_bruta_dia'] += $qtdSaidaBruta;
-                $groupedByDate[$data]['quantidade_devolvida_dia'] += $qtdDevolvida;
-                $groupedByDate[$data]['quantidade_liquida_dia'] += $qtdLiquida;
-                $groupedByDate[$data]['quantidade_total_dia'] += $qtdLiquida;
+                $groupedByDate[$data]['quantidade_saida_bruta_dia'] += (float)$item->quantidade_saida_bruta;
+                $groupedByDate[$data]['quantidade_devolvida_dia'] += (float)$item->quantidade_devolvida;
+                $groupedByDate[$data]['quantidade_liquida_dia'] += (float)$item->consumo_liquido;
             }
-            
-            // Converter para array indexado e ordenar por data
-            $resultsWithDetails = array_values($groupedByDate);
+
+            // Injetamos a estrutura modificada dentro do objeto nativo do Paginator
+            $paginator->setCollection(collect(array_values($groupedByDate)));
 
             return response()->json([
                 'status' => true,
                 'message' => 'Relatório de saídas por data recuperado com sucesso',
-                'data' => $resultsWithDetails,
+                'data' => $paginator, // Metadados automáticos (current_page, next_page_url, total)
                 'periodo' => [
                     'data_inicial' => $dateFrom,
                     'data_final' => $dateTo
@@ -1246,93 +1197,121 @@ class RelatoriosController extends Controller
                 ], 422);
             }
 
-            // Query base com eager loading para evitar N+1
+            // Query base com eager loading massivo para evitar N+1
             $query = \App\Models\Estoque::with([
                 'produto:id,nome,codigo_simpas,codigo_barras,grupo_produto_id,lista_portaria,unidade_medida_id',
                 'produto.grupoProduto:id,nome,tipo,controlado',
                 'produto.unidadeMedida:id,nome',
                 'setor:id,polo_id,nome,tipo',
-                'setor.polo:id,nome'
+                'setor.polo:id,nome',
+                // Eager Load inteligente dos lotes
+                'lotes' => function($q) use ($data) {
+                    $q->where('quantidade_disponivel', '>', 0)
+                      ->orderBy('data_vencimento', 'asc');
+                      
+                    if (!empty($data['filters']['dias_vencimento'])) {
+                        $dataLimite = now()->addDays($data['filters']['dias_vencimento']);
+                        $q->whereDate('data_vencimento', '<=', $dataLimite);
+                    }
+                }
             ]);
 
             // Restringir aos setores que o usuário autenticado tem acesso.
-            // Super admin enxerga todos os setores (sem restrição).
             $user = auth()->user();
             if (!$user->isSuperAdmin()) {
                 $setoresPermitidos = \Illuminate\Support\Facades\DB::table('usuario_setor')
                     ->where('usuario_id', $user->id)
                     ->pluck('setor_id');
-                // Na tabela estoque, 'setor_id' referencia setores.id
                 $query->whereIn('estoque.setor_id', $setoresPermitidos);
             }
 
             // Aplicar filtros se fornecidos
             $filters = $data['filters'] ?? [];
 
-            // Filtro por polo
             if (!empty($filters['polo_id'])) {
                 $query->whereHas('setor', function ($q) use ($filters) {
                     $q->where('polo_id', $filters['polo_id']);
                 });
             }
 
-            // Filtro por setor
             if (!empty($filters['setor_id'])) {
-                $query->where('setor_id', $filters['setor_id']);
+                $query->where('estoque.setor_id', $filters['setor_id']);
             }
 
             if (!empty($filters['produto_id'])) {
-                $query->where('produto_id', $filters['produto_id']);
+                $query->where('estoque.produto_id', $filters['produto_id']);
             }
 
             if (!empty($filters['status_disponibilidade'])) {
-                $query->where('status_disponibilidade', $filters['status_disponibilidade']);
+                $query->where('estoque.status_disponibilidade', $filters['status_disponibilidade']);
             }
 
-            // Filtro por tipo de produto
             if (!empty($filters['tipo'])) {
                 $query->whereHas('produto.grupoProduto', function ($q) use ($filters) {
                     $q->where('tipo', $filters['tipo']);
                 });
             }
 
-            // Filtro por produtos abaixo do mínimo
             if (!empty($filters['abaixo_minimo']) && $filters['abaixo_minimo'] === true) {
-                $query->whereRaw('quantidade_atual < quantidade_minima');
+                $query->whereRaw('estoque.quantidade_atual < estoque.quantidade_minima');
             }
 
-            // Ordenação: por nome do produto e depois por setor
+            // Ordenação
             $query->join('setores as s', 'estoque.setor_id', '=', 's.id')
                   ->join('produtos as p', 'estoque.produto_id', '=', 'p.id')
                   ->orderBy('p.nome', 'asc')
                   ->orderBy('s.nome', 'asc')
-                  ->select('estoque.*'); // Importante: selecionar apenas campos da tabela estoque
+                  ->select('estoque.*'); 
 
-            // Buscar todos os resultados
-            $results = $query->get();
+            // CLONAR a query original ANTES de aplicar get() ou paginate()
+            // Isso erradica as queries soltas e burras que contavam toda a tabela
+            $queryBaseTotais = clone $query;
+            $totalItens = (clone $queryBaseTotais)->count();
+            $totalDisp = (clone $queryBaseTotais)->where('estoque.status_disponibilidade', 'D')->count();
+            $totalIndisp = (clone $queryBaseTotais)->where('estoque.status_disponibilidade', 'I')->count();
+            $totalAbaixoMin = (clone $queryBaseTotais)->whereRaw('estoque.quantidade_atual < estoque.quantidade_minima')->count();
 
-            $user = auth()->user();
+            // Total financeiro calculado direto no banco via JOIN
+            // Em vez de somar Arrays PHP na RAM, fazemos uma agregação massiva e leve no banco.
+            $totalFinanceiroQuery = clone $queryBaseTotais;
+            $totalFinanceiroEstoque = $totalFinanceiroQuery->join('estoque_lote as el', function($join) {
+                $join->on('el.setor_id', '=', 'estoque.setor_id')
+                     ->on('el.produto_id', '=', 'estoque.produto_id')
+                     ->where('el.quantidade_disponivel', '>', 0);
+            })->sum(\Illuminate\Support\Facades\DB::raw('el.quantidade_disponivel * COALESCE(el.valor_unitario, 0)'));
 
-            // Buscar lotes para cada item do estoque
-            $items = collect($results)->map(function ($estoque) use ($filters, $user) {
-                $podeVerValores = $user && $estoque->setor && $user->podeVerValoresFinanceiros($estoque->setor);
+            $totalizadores = [
+                'total_itens' => $totalItens,
+                'total_produtos_disponiveis' => $totalDisp,
+                'total_produtos_indisponiveis' => $totalIndisp,
+                'total_abaixo_minimo' => $totalAbaixoMin,
+                'valor_total_estoque' => round($totalFinanceiroEstoque, 2),
+            ];
 
-                // Buscar lotes deste produto neste setor
-                $lotesQuery = \App\Models\EstoqueLote::where('setor_id', $estoque->setor_id)
-                    ->where('produto_id', $estoque->produto_id)
-                    ->where('quantidade_disponivel', '>', 0)
-                    ->orderBy('data_vencimento', 'asc');
+            // PAGINAÇÃO OBRIGATÓRIA - Resolve o Out of Memory em relatórios massivos
+            $paginator = $query->paginate(50);
 
-                // Filtro por dias de vencimento se fornecido
-                if (!empty($filters['dias_vencimento'])) {
-                    $dataLimite = now()->addDays($filters['dias_vencimento']);
-                    $lotesQuery->whereDate('data_vencimento', '<=', $dataLimite);
+            // Pré-cálculo da permissão de verificação financeira (Memoization Cache)
+            // Evita disparar 50 consultas ao BD por página para checar o mesmo setor
+            $permissoesFinanceirasCache = [];
+            $checkPermissaoFinanceira = function($setor) use (&$permissoesFinanceirasCache, $user) {
+                if (!$setor) return false;
+                if (!isset($permissoesFinanceirasCache[$setor->id])) {
+                    $permissoesFinanceirasCache[$setor->id] = $user->podeVerValoresFinanceiros($setor);
                 }
+                return $permissoesFinanceirasCache[$setor->id];
+            };
 
-                $lotes = $lotesQuery->get();
+            // Transformação iterativa (apenas para exibição da página)
+            $items = $paginator->getCollection()->map(function ($estoque) use ($checkPermissaoFinanceira) {
+                
+                // Validação de permissão instantânea via Cache O(1)
+                $podeVerValores = $checkPermissaoFinanceira($estoque->setor);
 
-                // Calcular estatísticas dos lotes
-                $loteVencimentoProximo = $lotes->first(); // Primeiro lote (mais próximo de vencer)
+                // Lotes já vieram no Eager Load! Nada de N+1 aqui.
+                $lotes = $estoque->lotes ?? collect();
+
+                $loteVencimentoProximo = $lotes->first(); 
                 $totalLotes = $lotes->count();
                 $quantidadeLotes = $lotes->sum('quantidade_disponivel');
 
@@ -1342,32 +1321,33 @@ class RelatoriosController extends Controller
                 $lotesFormatados = $lotes->map(function($lote) use ($podeVerValores, &$valorTotalProduto, &$temValor) {
                     $vUnit = ($podeVerValores && $lote->valor_unitario !== null) ? (float) $lote->valor_unitario : null;
                     $subtotal = ($vUnit !== null) ? round($vUnit * (float) $lote->quantidade_disponivel, 2) : null;
+                    
                     if ($subtotal !== null) {
                         $valorTotalProduto += $subtotal;
                         $temValor = true;
                     }
+                    
                     return [
                         'id' => $lote->id,
                         'lote' => $lote->lote,
                         'quantidade_disponivel' => (int) $lote->quantidade_disponivel,
                         'valor_unitario' => $vUnit,
                         'valor_total_lote' => $subtotal,
-                        'data_vencimento' => $lote->data_vencimento->format('Y-m-d'),
-                        'data_fabricacao' => $lote->data_fabricacao ? $lote->data_fabricacao->format('Y-m-d') : null,
-                        'dias_para_vencer' => now()->diffInDays($lote->data_vencimento, false),
-                        'vencido' => $lote->data_vencimento < now()
+                        'data_vencimento' => $lote->data_vencimento ? \Carbon\Carbon::parse($lote->data_vencimento)->format('Y-m-d') : null,
+                        'data_fabricacao' => $lote->data_fabricacao ? \Carbon\Carbon::parse($lote->data_fabricacao)->format('Y-m-d') : null,
+                        'dias_para_vencer' => $lote->data_vencimento ? now()->diffInDays(\Carbon\Carbon::parse($lote->data_vencimento), false) : null,
+                        'vencido' => $lote->data_vencimento ? \Carbon\Carbon::parse($lote->data_vencimento) < now() : false
                     ];
                 });
 
-                // Adicionar informações de lotes ao objeto estoque
                 $estoque->lotes_info = [
                     'total_lotes' => $totalLotes,
                     'quantidade_total_lotes' => (int) $quantidadeLotes,
                     'lote_proximo_vencimento' => $loteVencimentoProximo ? [
                         'lote' => $loteVencimentoProximo->lote,
                         'quantidade' => (int) $loteVencimentoProximo->quantidade_disponivel,
-                        'data_vencimento' => $loteVencimentoProximo->data_vencimento->format('Y-m-d'),
-                        'dias_para_vencer' => now()->diffInDays($loteVencimentoProximo->data_vencimento, false)
+                        'data_vencimento' => $loteVencimentoProximo->data_vencimento ? \Carbon\Carbon::parse($loteVencimentoProximo->data_vencimento)->format('Y-m-d') : null,
+                        'dias_para_vencer' => $loteVencimentoProximo->data_vencimento ? now()->diffInDays(\Carbon\Carbon::parse($loteVencimentoProximo->data_vencimento), false) : null
                     ] : null,
                     'lotes' => $lotesFormatados
                 ];
@@ -1375,28 +1355,19 @@ class RelatoriosController extends Controller
                 $estoque->pode_ver_valores = $podeVerValores;
                 $estoque->valor_total = ($podeVerValores && $temValor) ? round($valorTotalProduto, 2) : null;
                 $estoque->preco_medio = ($podeVerValores && $temValor && $quantidadeLotes > 0) ? round($valorTotalProduto / $quantidadeLotes, 4) : null;
-
-                // Adicionar flag se está abaixo do mínimo
                 $estoque->abaixo_minimo = $estoque->quantidade_atual < $estoque->quantidade_minima;
 
                 return $estoque;
             });
 
-            $totalFinanceiroEstoque = $items->where('pode_ver_valores', true)->sum('valor_total');
-
-            // Calcular totalizadores
-            $totalizadores = [
-                'total_itens' => $items->count(),
-                'total_produtos_disponiveis' => \App\Models\Estoque::where('status_disponibilidade', 'D')->count(),
-                'total_produtos_indisponiveis' => \App\Models\Estoque::where('status_disponibilidade', 'I')->count(),
-                'total_abaixo_minimo' => \App\Models\Estoque::whereRaw('quantidade_atual < quantidade_minima')->count(),
-                'valor_total_estoque' => round($totalFinanceiroEstoque, 2),
-            ];
+            // Devolver a coleção mascarada ao paginador
+            $paginator->setCollection($items);
 
             return response()->json([
                 'status' => true,
                 'message' => 'Relatório de estoque recuperado com sucesso',
-                'data' => $items,
+                // Enviamos o paginator nativo com metadata (current_page, last_page, total)
+                'data' => $paginator, 
                 'totalizadores' => $totalizadores
             ], 200);
 
