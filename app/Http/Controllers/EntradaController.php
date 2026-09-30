@@ -36,17 +36,26 @@ class EntradaController extends Controller
      */
     public function add(StoreEntradaRequest $request)
     {
-        $user = auth()->user();
-        if (!$user || !$user->isAdmin()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.'
-            ], 403);
-        }
-
         $data = $request->validated();
 
         $setor = Setores::find($data['setor_id']);
+
+        $user = auth()->user();
+        $podeRegistrar = $user && (
+            $user->isSuperAdmin()
+            || $user->isAdmin()
+            || $user->setores()
+                ->where('setores.id', $setor->id)
+                ->whereIn('usuario_setor.perfil', ['admin', 'almoxarife'])
+                ->exists()
+        );
+
+        if (!$podeRegistrar) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Acesso negado. Apenas administradores ou almoxarifes vinculados ao setor distribuidor podem registrar ou alterar entradas.'
+            ], 403);
+        }
 
         if (!$setor->estoque) {
             return response()->json([
@@ -257,18 +266,27 @@ class EntradaController extends Controller
      */
     public function update(UpdateEntradaRequest $request)
     {
-        $user = auth()->user();
-        if (!$user || !$user->isAdmin()) {
-            return response()->json([
-                'status' => false,
-                'message' => 'Acesso negado. Apenas administradores podem registrar ou alterar entradas.'
-            ], 403);
-        }
-
         $data = $request->validated();
 
         $entrada = Entrada::with(['itens'])->find($data['id']);
         $setor = Setores::find($data['setor_id']);
+
+        $user = auth()->user();
+        $podeAlterar = $user && (
+            $user->isSuperAdmin()
+            || $user->isAdmin()
+            || $user->setores()
+                ->where('setores.id', $setor->id)
+                ->whereIn('usuario_setor.perfil', ['admin', 'almoxarife'])
+                ->exists()
+        );
+
+        if (!$podeAlterar) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Acesso negado. Apenas administradores ou almoxarifes vinculados ao setor podem registrar ou alterar entradas.'
+            ], 403);
+        }
 
         if (!$setor->estoque) {
             return response()->json([

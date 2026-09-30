@@ -13,6 +13,25 @@ use App\Http\Requests\UserRequest;
 
 class UserController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware(function ($request, $next) {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Não autenticado.'], 401);
+            }
+
+            if (!$user->isSuperAdmin() && !$user->isAdmin()) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado ao gerenciamento de usuários.'
+                ], 403);
+            }
+
+            return $next($request);
+        });
+    }
+
     public function store(Request $request)
     {
         $dadosValidados = method_exists($request, 'validated') 

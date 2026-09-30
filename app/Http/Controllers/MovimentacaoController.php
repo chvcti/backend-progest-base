@@ -405,7 +405,7 @@ class MovimentacaoController extends Controller
         }
 
         try {
-            return DB::transaction(function () use ($action, $id, $mov, $itens) {
+            return DB::transaction(function () use ($action, $id, $mov, $itens, $aprovadorId) {
 
             Log::info("Processando ação: $action para Movimentacao ID: $id");
 

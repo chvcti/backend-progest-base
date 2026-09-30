@@ -11,6 +11,32 @@ use \Illuminate\Support\Facades\DB;
 
 class RelatoriosController extends Controller
 {
+    public function __construct()
+    {
+        $this->middleware(function ($request, $next) {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json(['status' => false, 'message' => 'Não autenticado.'], 401);
+            }
+
+            if (!$user->isSuperAdmin() && !$user->isAdmin()) {
+                $ehAlmoxarife = DB::table('usuario_setor')
+                    ->where('usuario_id', $user->id)
+                    ->where('perfil', 'almoxarife')
+                    ->exists();
+
+                if (!$ehAlmoxarife) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'Acesso negado ao módulo de relatórios.'
+                    ], 403);
+                }
+            }
+
+            return $next($request);
+        });
+    }
+
     /**
      * Relatório de Entradas
      * POST /api/relatorios/entradas/list
@@ -1396,6 +1422,14 @@ class RelatoriosController extends Controller
     public function listUsuariosReport(Request $request)
     {
         try {
+            $user = auth()->user();
+            if (!$user || (!$user->isSuperAdmin() && !$user->isAdmin())) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Acesso negado. Apenas administradores podem visualizar o relatório de usuários.'
+                ], 403);
+            }
+
             $data = $request->all();
             
             // Validação dos filtros
