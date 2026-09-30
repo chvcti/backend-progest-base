@@ -15,7 +15,6 @@ use App\Models\RegimeContratacao;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Database\Seeders\CatalogoProdutosOficialSeeder;
 use Database\Seeders\FornecedoresSeeder;
 use Laravel\Sanctum\Sanctum;
@@ -39,21 +38,30 @@ class CadastrosCrudFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
             CatalogoProdutosOficialSeeder::class,
             FornecedoresSeeder::class,
         ]);
 
         $this->superAdmin = User::where('email', 'adminti@gmail.com')->firstOrFail();
-        $this->solicitanteComum = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
+        $this->unidadeAmpola = UnidadeMedida::firstOrFail();
+        $this->regimeEstatutario = RegimeContratacao::firstOrFail();
+
+        $this->solicitanteComum = User::create([
+            'name'                  => 'SOLICITANTE TESTE',
+            'email'                 => 'solicitante.teste@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => $this->gerarCpfValido(),
+            'telefone'              => '77999990003',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $this->regimeEstatutario->id,
+        ]);
 
         $this->poloHgvc = Polo::where('sigla', 'HGVC')->first() ?? Polo::firstOrFail();
         $this->grupoMedicamento = GrupoProduto::firstOrCreate(
             ['nome' => 'MEDICAMENTOS GERAIS'],
             ['tipo' => 'Medicamento', 'status' => 'A']
         );
-        $this->unidadeAmpola = UnidadeMedida::firstOrFail();
-        $this->regimeEstatutario = RegimeContratacao::firstOrFail();
     }
 
     private function gerarCpfValido(): string

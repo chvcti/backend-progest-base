@@ -10,7 +10,6 @@ use App\Models\Setores;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -35,19 +34,66 @@ class UsuarioSetorFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
         ]);
 
-        // 2. Resgata os usuários padrão do sistema
+        // 2. Resgata superAdmin
         $this->superAdmin  = User::where('email', 'adminti@gmail.com')->firstOrFail();
-        $this->adminComum   = User::where('email', 'pabloadmin@gmail.com')->firstOrFail();
-        $this->solicitante  = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
-        $this->almoxarife   = User::where('email', 'arthuralmoxarife@gmail.com')->firstOrFail();
 
         // 3. Resgata setores-chave configurados pelo PolosESetoresDemoSeeder
         $this->cafSetor = Setores::where('nome', 'CENTRAL DE ABASTECIMENTO FARMACÊUTICO (CAF)')->firstOrFail();
         $this->setorSemEstoque = Setores::where('nome', 'CLÍNICA MÉDICA')->where('estoque', false)->firstOrFail();
         $this->setorComEstoque = Setores::where('nome', 'FARMÁCIA DE DISPENSAÇÃO')->where('estoque', true)->firstOrFail();
+
+        // 4. Cria usuários padrão do teste
+        $regimeId = DB::table('regime_contratacao')->value('id') ?? 1;
+
+        $this->adminComum = User::create([
+            'name'                  => 'ADMIN TESTE',
+            'email'                 => 'admin.teste@progest.teste',
+            'password'              => Hash::make('Admin123'),
+            'cpf'                   => '33333333331',
+            'telefone'              => '77999990031',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->adminComum->id,
+            'setor_id'   => $this->cafSetor->id,
+            'perfil'     => 'admin',
+        ]);
+
+        $this->solicitante = User::create([
+            'name'                  => 'SOLICITANTE TESTE',
+            'email'                 => 'solicitante.teste@progest.teste',
+            'password'              => Hash::make('Admin123'),
+            'cpf'                   => '33333333332',
+            'telefone'              => '77999990032',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->solicitante->id,
+            'setor_id'   => $this->cafSetor->id,
+            'perfil'     => 'solicitante',
+        ]);
+
+        $this->almoxarife = User::create([
+            'name'                  => 'ALMOXARIFE TESTE',
+            'email'                 => 'almoxarife.teste@progest.teste',
+            'password'              => Hash::make('Admin123'),
+            'cpf'                   => '33333333333',
+            'telefone'              => '77999990033',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->almoxarife->id,
+            'setor_id'   => $this->cafSetor->id,
+            'perfil'     => 'almoxarife',
+        ]);
     }
 
     /**
@@ -185,7 +231,7 @@ class UsuarioSetorFeatureTest extends TestCase
     {
         Sanctum::actingAs($this->superAdmin);
 
-        // jeanSolicitante já está vinculado aos setores pelo UsuariosEPerfisSeeder
+        // solicitante já está vinculado à CAF pelo setUp
         $this->assertDatabaseHas('usuario_setor', [
             'usuario_id' => $this->solicitante->id,
             'setor_id'   => $this->cafSetor->id,

@@ -29,7 +29,7 @@ class DemonstracaoSistemaSeeder extends Seeder
      */
     public function run()
     {
-        $this->command->info('🏥 [DemonstracaoSistemaSeeder] Iniciando simulação hiper-realista do ProGest...');
+        $this->command->info('🏥 [DemonstracaoSistemaSeeder] Iniciando simulação hospitalar hiper-realista do ProGest...');
 
         // 0. Garante que a base oficial limpa existe antes de popular cenários de demonstração
         if (Polo::count() === 0 || Produto::count() === 0) {
@@ -48,10 +48,12 @@ class DemonstracaoSistemaSeeder extends Seeder
     {
         $now = Carbon::now();
 
-        // Desativa observers durante a carga para evitar efeitos colaterais em setores oficiais
+        // Desativa observers durante a carga para evitar efeitos colaterais
         Produto::unsetEventDispatcher();
 
-        // 1. Polos Oficiais
+        // =====================================================================
+        // 1. POLOS OFICIAIS
+        // =====================================================================
         $hgvc = Polo::where('sigla', 'HGVC')->orWhere('nome', 'like', '%Geral%')->first();
         $hap  = Polo::where('sigla', 'HAP')->orWhere('nome', 'like', '%Afrânio%')->first();
 
@@ -62,23 +64,9 @@ class DemonstracaoSistemaSeeder extends Seeder
         // =====================================================================
         // 2. TOPOLOGIA DOS SETORES DE DEMONSTRAÇÃO (SUFIXO "[Exemplo]")
         // =====================================================================
-        $this->command->info('🏛️ [1/5] Configurando setores e cadeia de distribuição de demonstração...');
+        $this->command->info('🏛️ [1/6] Configurando setores e cadeia de distribuição de demonstração...');
 
-        // HAP
-        $almoxHap = Setores::updateOrCreate(
-            ['polo_id' => $hap->id, 'nome' => 'Almoxarifado Central HAP (Exemplo)'],
-            ['estoque' => true, 'tipo' => 'Ambos', 'status' => 'A']
-        );
-        $farmSateliteHap = Setores::updateOrCreate(
-            ['polo_id' => $hap->id, 'nome' => 'Farmácia Satélite HAP (Exemplo)'],
-            ['estoque' => true, 'tipo' => 'Medicamento', 'status' => 'A']
-        );
-        $clinicaMedicaHap = Setores::updateOrCreate(
-            ['polo_id' => $hap->id, 'nome' => 'Clínica Médica HAP (Exemplo)'],
-            ['estoque' => false, 'tipo' => 'Ambos', 'status' => 'A']
-        );
-
-        // HGVC
+        // HGVC (Polo de Grande Porte)
         $cafHgvc = Setores::updateOrCreate(
             ['polo_id' => $hgvc->id, 'nome' => 'CAF - Central de Abastecimento Farmacêutico (Exemplo)'],
             ['estoque' => true, 'tipo' => 'Medicamento', 'status' => 'A']
@@ -92,16 +80,30 @@ class DemonstracaoSistemaSeeder extends Seeder
             ['estoque' => false, 'tipo' => 'Medicamento', 'status' => 'A']
         );
 
+        // HAP (Polo Menor / Especializado)
+        $almoxHap = Setores::updateOrCreate(
+            ['polo_id' => $hap->id, 'nome' => 'Almoxarifado Central HAP (Exemplo)'],
+            ['estoque' => true, 'tipo' => 'Ambos', 'status' => 'A']
+        );
+        $farmSateliteHap = Setores::updateOrCreate(
+            ['polo_id' => $hap->id, 'nome' => 'Farmácia Satélite HAP (Exemplo)'],
+            ['estoque' => true, 'tipo' => 'Medicamento', 'status' => 'A']
+        );
+        $clinicaMedicaHap = Setores::updateOrCreate(
+            ['polo_id' => $hap->id, 'nome' => 'Clínica Médica HAP (Exemplo)'],
+            ['estoque' => false, 'tipo' => 'Ambos', 'status' => 'A']
+        );
+
         $demoSetorIds = [
-            $almoxHap->id,
-            $farmSateliteHap->id,
-            $clinicaMedicaHap->id,
             $cafHgvc->id,
             $farmSateliteHgvc->id,
-            $utiHgvc->id
+            $utiHgvc->id,
+            $almoxHap->id,
+            $farmSateliteHap->id,
+            $clinicaMedicaHap->id
         ];
 
-        // Limpar dados anteriores exclusivamente vinculados aos setores de exemplo (Idempotência segura)
+        // Limpeza Segura e Idempotente dos dados prévios nos setores de exemplo
         $movsExemploIds = Movimentacao::whereIn('setor_origem_id', $demoSetorIds)
             ->orWhereIn('setor_destino_id', $demoSetorIds)
             ->pluck('id');
@@ -118,29 +120,27 @@ class DemonstracaoSistemaSeeder extends Seeder
             Entrada::whereIn('id', $entradasExemploIds)->delete();
         }
 
-        // Limpar dados nos setores de exemplo e purificar qualquer setor oficial
         EstoqueLote::whereIn('setor_id', $demoSetorIds)->delete();
         Estoque::whereIn('setor_id', $demoSetorIds)->delete();
-        EstoqueLote::whereNotIn('setor_id', $demoSetorIds)->delete();
-        Estoque::whereNotIn('setor_id', $demoSetorIds)->delete();
 
-        // Cadeia de Suprimentos (setor_distribuidor)
+        // Cadeia de Suprimentos Oficial (setor_distribuidor)
+        // Regra: Solicitante -> Distribuidor Autorizado
         $distribuicoes = [
-            // HAP
-            [$farmSateliteHap->id, $almoxHap->id],
-            [$clinicaMedicaHap->id, $almoxHap->id],
-            [$clinicaMedicaHap->id, $farmSateliteHap->id],
-            [$almoxHap->id, $farmSateliteHap->id], // Remanejamento entre estoques
-
             // HGVC
-            [$farmSateliteHgvc->id, $cafHgvc->id],
-            [$utiHgvc->id, $cafHgvc->id],
-            [$utiHgvc->id, $farmSateliteHgvc->id],
-            [$cafHgvc->id, $farmSateliteHgvc->id], // Remanejamento entre estoques
+            [$farmSateliteHgvc->id, $cafHgvc->id],         // Satélite solicita para CAF
+            [$utiHgvc->id,          $cafHgvc->id],         // UTI solicita para CAF
+            [$utiHgvc->id,          $farmSateliteHgvc->id],// UTI solicita para Satélite
+            [$cafHgvc->id,          $farmSateliteHgvc->id],// Remanejamento mútuo
 
-            // Inter-polo
-            [$almoxHap->id, $cafHgvc->id],
-            [$farmSateliteHap->id, $cafHgvc->id],
+            // HAP
+            [$farmSateliteHap->id,  $almoxHap->id],        // Satélite solicita para Almoxarifado
+            [$clinicaMedicaHap->id, $almoxHap->id],        // Clínica solicita para Almoxarifado
+            [$clinicaMedicaHap->id, $farmSateliteHap->id], // Clínica solicita para Satélite
+            [$almoxHap->id,         $farmSateliteHap->id], // Remanejamento mútuo
+
+            // Inter-Polo (Rede Hospitalar Integrada)
+            [$almoxHap->id,         $cafHgvc->id],         // HAP ressupre na CAF HGVC
+            [$farmSateliteHap->id,  $cafHgvc->id],
         ];
 
         foreach ($distribuicoes as [$solicId, $distId]) {
@@ -151,11 +151,11 @@ class DemonstracaoSistemaSeeder extends Seeder
         }
 
         // =====================================================================
-        // 3. USUÁRIOS E ISOLAMENTO SETORIAL
+        // 3. USUÁRIOS E ISOLAMENTO SETORIAL (PERFIS HOMOLOGADOS)
         // =====================================================================
-        $this->command->info('👥 [2/5] Criando usuários de homologação e vínculos de acesso...');
+        $this->command->info('👥 [2/6] Configurando usuários oficiais de teste e permissões...');
 
-        $senhaHash = Hash::make(env('USER_DEFAULT_PASSWORD', 'Mudar@123'));
+        $senhaHash = Hash::make(env('USER_DEFAULT_PASSWORD', 'Admin123'));
         $regimeId = DB::table('regime_contratacao')->value('id') ?? 1;
 
         $criarUsuario = function($name, $email, $cpf, $telefone) use ($senhaHash, $regimeId, $now) {
@@ -181,47 +181,65 @@ class DemonstracaoSistemaSeeder extends Seeder
         $userAlmoxHap       = $criarUsuario('ALMOXARIFE CENTRAL HAP', 'almoxarife.hap@progest.teste', '44444444444', '77999990004');
         $userSolicHap       = $criarUsuario('SOLICITANTE CLÍNICA HAP', 'solicitante.hap@progest.teste', '55555555555', '77999990005');
 
-        // Vínculos de polos (Apenas Administradores de Polo possuem registro em usuario_polo)
-        $vinculosPolos = [
-            [$userAdminGeral->id, $hgvc->id],
-            [$userAdminGeral->id, $hap->id],
+        $demoUserIds = [
+            $userAdminGeral->id,
+            $userAlmoxCaf->id,
+            $userSolicUti->id,
+            $userAlmoxHap->id,
+            $userSolicHap->id
         ];
-        foreach ($vinculosPolos as [$uId, $pId]) {
-            DB::table('usuario_polo')->updateOrInsert(
-                ['usuario_id' => $uId, 'polo_id' => $pId],
-                ['created_at' => $now, 'updated_at' => $now]
-            );
-        }
 
-        // Vínculos setoriais estritos
+        // Limpeza prévia estrita de permissões dos usuários demo
+        DB::table('usuario_polo')->whereIn('usuario_id', $demoUserIds)->delete();
+        DB::table('usuario_setor')->whereIn('usuario_id', $demoUserIds)->delete();
+
+        // Vínculos de Polos: Apenas Administrador Geral Demo possui vínculo na tabela usuario_polo
+        DB::table('usuario_polo')->insert([
+            ['usuario_id' => $userAdminGeral->id, 'polo_id' => $hgvc->id, 'created_at' => $now, 'updated_at' => $now],
+            ['usuario_id' => $userAdminGeral->id, 'polo_id' => $hap->id,  'created_at' => $now, 'updated_at' => $now],
+        ]);
+
+        // Vínculos Setoriais Estritos conforme Regra de Negócio:
+        // - Almoxarifes: apenas em setores com estoque (CAF, Farmácias Satélites, Almoxarifado Central)
+        // - Solicitantes: apenas em setores assistenciais/consumidores (UTI, Clínica Médica)
+        // - Administrador: perfil admin nos setores-chave
         $vinculosSetores = [
-            // Admin geral vinculado como admin nos setores-chave
+            // Admin Geral Demo
             [$userAdminGeral->id, $cafHgvc->id, 'admin'],
-            [$userAdminGeral->id, $almoxHap->id, 'admin'],
             [$userAdminGeral->id, $farmSateliteHgvc->id, 'admin'],
+            [$userAdminGeral->id, $almoxHap->id, 'admin'],
             [$userAdminGeral->id, $farmSateliteHap->id, 'admin'],
-            // Almoxarifes
+
+            // Almoxarife CAF HGVC (apenas setores com estoque do HGVC)
             [$userAlmoxCaf->id, $cafHgvc->id, 'almoxarife'],
             [$userAlmoxCaf->id, $farmSateliteHgvc->id, 'almoxarife'],
+
+            // Solicitante UTI HGVC (apenas setor assistencial UTI)
+            [$userSolicUti->id, $utiHgvc->id, 'solicitante'],
+
+            // Almoxarife HAP (apenas setores com estoque do HAP)
             [$userAlmoxHap->id, $almoxHap->id, 'almoxarife'],
             [$userAlmoxHap->id, $farmSateliteHap->id, 'almoxarife'],
-            // Solicitantes
-            [$userSolicUti->id, $utiHgvc->id, 'solicitante'],
+
+            // Solicitante Clínica HAP (apenas setor assistencial Clínica Médica)
             [$userSolicHap->id, $clinicaMedicaHap->id, 'solicitante'],
         ];
+
         foreach ($vinculosSetores as [$uId, $sId, $perf]) {
-            DB::table('usuario_setor')->updateOrInsert(
-                ['usuario_id' => $uId, 'setor_id' => $sId],
-                ['perfil' => $perf, 'created_at' => $now, 'updated_at' => $now]
-            );
+            DB::table('usuario_setor')->insert([
+                'usuario_id' => $uId,
+                'setor_id'   => $sId,
+                'perfil'     => $perf,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
         }
 
         // =====================================================================
-        // 4. SELEÇÃO DE PRODUTOS REPRESENTATIVOS (CATÁLOGO REAL)
+        // 4. CATÁLOGO REAL DE PRODUTOS E FORNECEDORES
         // =====================================================================
-        $this->command->info('💊 [3/5] Selecionando produtos com SIMPAS, Barras e Portaria 344/98...');
+        $this->command->info('💊 [3/6] Mapeando catálogo com SIMPAS, Código de Barras e Portaria 344/98...');
 
-        // Resgatar ou enriquecer produtos reais
         $selecionarOuCriar = function($termoBusca, $nomePadrao, $portaria, $simpas, $barras, $grupoNome, $unidadeNome) use ($now) {
             $prod = Produto::where('nome', 'like', "%{$termoBusca}%")->first();
             if ($prod) {
@@ -250,7 +268,6 @@ class DemonstracaoSistemaSeeder extends Seeder
             ]);
         };
 
-        // Catálogo Selecionado
         $produtosDemo = [
             // Portaria 344 - A1 (Entorpecentes)
             'ALFENTANILA' => $selecionarOuCriar('ALFENTANILA', 'ALFENTANILA, cloridrato de solucao injetavel 0,544 mg/mL amp. 5mL', 'A1', '65.02.19.00008041-1', '7891058001015', 'MEDICAMENTOS CONTROLADOS', 'Ampola'),
@@ -278,73 +295,85 @@ class DemonstracaoSistemaSeeder extends Seeder
             'LUVA_PROC'   => $selecionarOuCriar('LUVA', 'LUVA DE PROCEDIMENTO NÃO CIRÚRGICO TAMANHO M', null, '65.15.05.00007788-9', '7898001177889', 'GERAL', 'Caixa'),
         ];
 
-        // Fornecedores
-        $fornCristalia = Fornecedor::where('razao_social_nome', 'like', '%Cristália%')->first()
-            ?? Fornecedor::firstOrCreate(['cnpj' => '44734671000151'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Cristália Produtos Químicos Farmacêuticos Ltda', 'status' => 'A']);
-        
+        // Fornecedores Homologados
         $fornEurofarma = Fornecedor::where('razao_social_nome', 'like', '%Eurofarma%')->first()
             ?? Fornecedor::firstOrCreate(['cnpj' => '61190096000192'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Eurofarma Laboratórios S.A.', 'status' => 'A']);
 
-        $fornCremer = Fornecedor::where('razao_social_nome', 'like', '%Cremer%')->first()
-            ?? Fornecedor::firstOrCreate(['cnpj' => '82641325000118'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Cremer S.A. Produtos Hospitalares', 'status' => 'A']);
+        $fornCristalia = Fornecedor::where('razao_social_nome', 'like', '%Cristália%')->first()
+            ?? Fornecedor::firstOrCreate(['cnpj' => '44734671000151'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Cristália Produtos Químicos Farmacêuticos Ltda', 'status' => 'A']);
 
         $fornFresenius = Fornecedor::where('razao_social_nome', 'like', '%Fresenius%')->first()
             ?? Fornecedor::firstOrCreate(['cnpj' => '49324221000104'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Fresenius Kabi Brasil Ltda', 'status' => 'A']);
 
-        // =====================================================================
-        // 5. ENTRADAS POR NOTA FISCAL E ESTOQUE FÍSICO COM FIFO
-        // =====================================================================
-        $this->command->info('📦 [4/5] Gerando Notas Fiscais históricas (90 dias) e lotes (saudáveis, críticos e vencidos)...');
+        $fornCremer = Fornecedor::where('razao_social_nome', 'like', '%Cremer%')->first()
+            ?? Fornecedor::firstOrCreate(['cnpj' => '82641325000118'], ['tipo_pessoa' => 'J', 'razao_social_nome' => 'Cremer S.A. Produtos Hospitalares', 'status' => 'A']);
 
-        $lotesConfiguracao = [
-            // [produto_key, lote_nome, dias_vencimento, quantidade, valor_un]
-            // CAF - Entradas e Lotes
-            ['ALFENTANILA',  'LOTE-ALF-24A', 450, 200, 14.50],
-            ['ALFENTANILA',  'LOTE-ALF-CRIT', 20,  40, 14.50], // Estado crítico (vence em 20 dias!)
-            ['MORFINA',      'LOTE-MORF-12', 360, 300, 8.90],
-            ['DIAZEPAM',     'LOTE-DZP-18',  540, 500, 0.45],
-            ['CLONAZEPAM',   'LOTE-CNP-14',  420, 400, 0.65],
-            ['HALOPERIDOL',  'LOTE-HAL-24',  720, 250, 3.20],
-            ['HALOPERIDOL',  'LOTE-HAL-VENC',-10,  15, 3.20], // Lote vencido há 10 dias (quarentena!)
-            ['AMITRIPTILINA','LOTE-AMI-18',  540, 300, 0.35],
-            ['DIPIRONA_AMP', 'LOTE-DIP-24A', 700, 800, 1.85],
-            ['DIPIRONA_AMP', 'LOTE-DIP-CRIT', 18, 120, 1.85], // Crítico (vence em 18 dias)
-            ['DIPIRONA_CP',  'LOTE-DIP-CP1', 600, 1200, 0.25],
-            ['PARACETAMOL',  'LOTE-PCT-18',  540, 600, 0.30],
-            ['CEFTRIAXONA',  'LOTE-CEF-24',  730, 350, 18.50],
-            ['OMEPRAZOL',    'LOTE-OMP-12',  360, 200, 9.20],
-            ['SORO_FISIO',   'LOTE-SOR-18',  540, 450, 6.40],
-            ['SERINGA_10',   'LOTE-SER-36', 1080, 2000, 0.75],
-            ['AGULHA_25',    'LOTE-AGU-36', 1080, 2500, 0.30],
-            ['LUVA_PROC',    'LOTE-LUV-24',  720, 150, 35.00],
+        // =====================================================================
+        // 5. ENTRADAS VIA NOTA FISCAL (EXCLUSIVAMENTE NOS ALMOXARIFADOS CENTRAIS)
+        // =====================================================================
+        $this->command->info('📦 [4/6] Gerando Notas Fiscais históricas e lotes na CAF e Almoxarifado Central...');
+
+        // 5.1 Entradas na CAF HGVC (Almoxarifado Central do Polo HGVC)
+        $nfsCafConfig = [
+            [
+                'nf' => 'NF-CAF-2026-081', 'dias_atras' => 80, 'forn' => $fornEurofarma,
+                'itens' => [
+                    ['DIPIRONA_AMP', 'LOTE-DIP-24A', 700, 1000, 1.85],
+                    ['CEFTRIAXONA',  'LOTE-CEF-24',  730, 400,  18.50],
+                    ['PARACETAMOL',  'LOTE-PCT-18',  540, 700,  0.30],
+                    ['DIPIRONA_CP',  'LOTE-DIP-CP1', 600, 1200, 0.25],
+                ]
+            ],
+            [
+                'nf' => 'NF-CAF-2026-094', 'dias_atras' => 60, 'forn' => $fornCristalia,
+                'itens' => [
+                    ['ALFENTANILA',  'LOTE-ALF-24A', 450, 200, 14.50],
+                    ['MORFINA',      'LOTE-MORF-12', 360, 300, 8.90],
+                    ['DIAZEPAM',     'LOTE-DZP-18',  540, 500, 0.45],
+                    ['HALOPERIDOL',  'LOTE-HAL-24',  720, 250, 3.20],
+                    ['HALOPERIDOL',  'LOTE-HAL-VENC', -10, 15, 3.20], // Lote vencido (quarentena)
+                ]
+            ],
+            [
+                'nf' => 'NF-CAF-2026-112', 'dias_atras' => 45, 'forn' => $fornFresenius,
+                'itens' => [
+                    ['SORO_FISIO',   'LOTE-SOR-18',  540, 500, 6.40],
+                    ['OMEPRAZOL',    'LOTE-OMP-12',  360, 200, 9.20],
+                    ['CLONAZEPAM',   'LOTE-CNP-14',  420, 400, 0.65],
+                    ['AMITRIPTILINA','LOTE-AMI-18',  540, 300, 0.35],
+                ]
+            ],
+            [
+                'nf' => 'NF-CAF-2026-135', 'dias_atras' => 25, 'forn' => $fornCremer,
+                'itens' => [
+                    ['SERINGA_10',   'LOTE-SER-36', 1080, 2500, 0.75],
+                    ['AGULHA_25',    'LOTE-AGU-36', 1080, 3000, 0.30],
+                    ['LUVA_PROC',    'LOTE-LUV-24',  720,  200, 35.00],
+                ]
+            ],
+            [
+                'nf' => 'NF-CAF-2026-150', 'dias_atras' => 5, 'forn' => $fornEurofarma,
+                'itens' => [
+                    ['DIPIRONA_AMP', 'LOTE-DIP-CRIT', 18, 120, 1.85], // Estado crítico (vence em 18 dias)
+                    ['ALFENTANILA',  'LOTE-ALF-CRIT', 20,  40, 14.50], // Estado crítico (vence em 20 dias)
+                ]
+            ],
         ];
 
-        // 5.1 Criar NFs na CAF (5 NFs nos últimos 90 dias)
-        $nfsCaf = [
-            ['nf' => 'NF-CAF-2026-081', 'dias_atras' => 80, 'forn' => $fornEurofarma],
-            ['nf' => 'NF-CAF-2026-094', 'dias_atras' => 60, 'forn' => $fornCristalia],
-            ['nf' => 'NF-CAF-2026-112', 'dias_atras' => 45, 'forn' => $fornFresenius],
-            ['nf' => 'NF-CAF-2026-135', 'dias_atras' => 25, 'forn' => $fornCremer],
-            ['nf' => 'NF-CAF-2026-150', 'dias_atras' => 5,  'forn' => $fornEurofarma],
-        ];
-
-        $nfIndex = 0;
-        foreach ($nfsCaf as $dadosNf) {
-            $dataEmissao = Carbon::now()->subDays($dadosNf['dias_atras']);
+        foreach ($nfsCafConfig as $dNF) {
+            $dataEmissao = Carbon::now()->subDays($dNF['dias_atras']);
             $entrada = Entrada::create([
-                'nota_fiscal'   => $dadosNf['nf'],
+                'nota_fiscal'   => $dNF['nf'],
                 'setor_id'      => $cafHgvc->id,
-                'fornecedor_id' => $dadosNf['forn']->id,
+                'fornecedor_id' => $dNF['forn']->id,
                 'created_at'    => $dataEmissao,
                 'updated_at'    => $dataEmissao,
             ]);
 
-            // Vincular itens a esta NF
-            $fatiaItens = array_slice($lotesConfiguracao, $nfIndex * 3, 4);
-            foreach ($fatiaItens as [$pKey, $loteNome, $diasVenc, $qtd, $valorUn]) {
+            foreach ($dNF['itens'] as [$pKey, $loteNome, $diasVenc, $qtd, $valorUn]) {
                 $produto = $produtosDemo[$pKey];
                 $dataVenc = Carbon::now()->addDays($diasVenc)->toDateString();
-                $dataFab = Carbon::now()->addDays($diasVenc)->subYears(2)->toDateString();
+                $dataFab  = Carbon::now()->addDays($diasVenc)->subYears(2)->toDateString();
 
                 ItensEntrada::create([
                     'entrada_id'      => $entrada->id,
@@ -358,58 +387,59 @@ class DemonstracaoSistemaSeeder extends Seeder
                     'updated_at'      => $dataEmissao,
                 ]);
 
-                // Registrar Estoque e EstoqueLote na CAF
-                $loteCadastrado = EstoqueLote::updateOrCreate(
-                    [
-                        'setor_id'   => $cafHgvc->id,
-                        'produto_id' => $produto->id,
-                        'lote'       => $loteNome,
-                    ],
-                    [
-                        'quantidade_disponivel' => $qtd,
-                        'valor_unitario'        => $valorUn,
-                        'data_fabricacao'       => $dataFab,
-                        'data_vencimento'       => $dataVenc,
-                        'created_at'            => $dataEmissao,
-                        'updated_at'            => $dataEmissao,
-                    ]
-                );
+                EstoqueLote::create([
+                    'setor_id'              => $cafHgvc->id,
+                    'produto_id'            => $produto->id,
+                    'lote'                  => $loteNome,
+                    'quantidade_disponivel' => $qtd,
+                    'valor_unitario'        => $valorUn,
+                    'data_fabricacao'       => $dataFab,
+                    'data_vencimento'       => $dataVenc,
+                    'created_at'            => $dataEmissao,
+                    'updated_at'            => $dataEmissao,
+                ]);
             }
-            $nfIndex++;
         }
 
-        // 5.2 Criar NFs no Almoxarifado Central HAP (3 NFs nos últimos 90 dias)
-        $nfsHap = [
-            ['nf' => 'NF-HAP-2026-031', 'dias_atras' => 70, 'forn' => $fornEurofarma],
-            ['nf' => 'NF-HAP-2026-054', 'dias_atras' => 35, 'forn' => $fornCremer],
-            ['nf' => 'NF-HAP-2026-088', 'dias_atras' => 8,  'forn' => $fornFresenius],
+        // 5.2 Entradas no Almoxarifado Central HAP
+        $nfsHapConfig = [
+            [
+                'nf' => 'NF-HAP-2026-031', 'dias_atras' => 70, 'forn' => $fornEurofarma,
+                'itens' => [
+                    ['DIPIRONA_AMP', 'LOTE-HAP-DIP', 500, 600, 1.85],
+                    ['PARACETAMOL',  'LOTE-HAP-PCT', 480, 400, 0.30],
+                ]
+            ],
+            [
+                'nf' => 'NF-HAP-2026-054', 'dias_atras' => 35, 'forn' => $fornCremer,
+                'itens' => [
+                    ['SERINGA_10',   'LOTE-HAP-SER', 900, 1200, 0.75],
+                    ['AGULHA_25',    'LOTE-HAP-AGU', 900, 1500, 0.30],
+                ]
+            ],
+            [
+                'nf' => 'NF-HAP-2026-088', 'dias_atras' => 10, 'forn' => $fornFresenius,
+                'itens' => [
+                    ['SORO_FISIO',   'LOTE-HAP-SOR', 420, 350, 6.40],
+                    ['DIAZEPAM',     'LOTE-HAP-DZP', 380, 200, 0.45],
+                ]
+            ],
         ];
 
-        $lotesHap = [
-            ['DIPIRONA_AMP', 'LOTE-HAP-DIP', 500, 400, 1.85],
-            ['PARACETAMOL',  'LOTE-HAP-PCT', 480, 300, 0.30],
-            ['SERINGA_10',   'LOTE-HAP-SER', 900, 1000, 0.75],
-            ['AGULHA_25',    'LOTE-HAP-AGU', 900, 1200, 0.30],
-            ['SORO_FISIO',   'LOTE-HAP-SOR', 420, 250, 6.40],
-            ['DIAZEPAM',     'LOTE-HAP-DZP', 380, 150, 0.45],
-        ];
-
-        $hapIndex = 0;
-        foreach ($nfsHap as $dadosNf) {
-            $dataEmissao = Carbon::now()->subDays($dadosNf['dias_atras']);
+        foreach ($nfsHapConfig as $dNF) {
+            $dataEmissao = Carbon::now()->subDays($dNF['dias_atras']);
             $entrada = Entrada::create([
-                'nota_fiscal'   => $dadosNf['nf'],
+                'nota_fiscal'   => $dNF['nf'],
                 'setor_id'      => $almoxHap->id,
-                'fornecedor_id' => $dadosNf['forn']->id,
+                'fornecedor_id' => $dNF['forn']->id,
                 'created_at'    => $dataEmissao,
                 'updated_at'    => $dataEmissao,
             ]);
 
-            $itensHap = array_slice($lotesHap, $hapIndex * 2, 2);
-            foreach ($itensHap as [$pKey, $loteNome, $diasVenc, $qtd, $valorUn]) {
+            foreach ($dNF['itens'] as [$pKey, $loteNome, $diasVenc, $qtd, $valorUn]) {
                 $produto = $produtosDemo[$pKey];
                 $dataVenc = Carbon::now()->addDays($diasVenc)->toDateString();
-                $dataFab = Carbon::now()->addDays($diasVenc)->subYears(2)->toDateString();
+                $dataFab  = Carbon::now()->addDays($diasVenc)->subYears(2)->toDateString();
 
                 ItensEntrada::create([
                     'entrada_id'      => $entrada->id,
@@ -423,114 +453,108 @@ class DemonstracaoSistemaSeeder extends Seeder
                     'updated_at'      => $dataEmissao,
                 ]);
 
-                EstoqueLote::updateOrCreate(
-                    [
-                        'setor_id'   => $almoxHap->id,
-                        'produto_id' => $produto->id,
-                        'lote'       => $loteNome,
-                    ],
-                    [
-                        'quantidade_disponivel' => $qtd,
-                        'valor_unitario'        => $valorUn,
-                        'data_fabricacao'       => $dataFab,
-                        'data_vencimento'       => $dataVenc,
-                        'created_at'            => $dataEmissao,
-                        'updated_at'            => $dataEmissao,
-                    ]
-                );
-            }
-            $hapIndex++;
-        }
-
-        // 5.3 Consolidar tabela 'estoque' e calcular proporção de níveis (70% ideal, 20% baixo, 10% zerado)
-        $setoresComEstoque = [$cafHgvc, $almoxHap, $farmSateliteHgvc, $farmSateliteHap];
-
-        foreach ($setoresComEstoque as $setorEstoque) {
-            $prodCount = 0;
-            foreach ($produtosDemo as $pKey => $produto) {
-                $prodCount++;
-                $saldoLotes = (int) EstoqueLote::where('setor_id', $setorEstoque->id)
-                    ->where('produto_id', $produto->id)
-                    ->sum('quantidade_disponivel');
-
-                // Distribuir níveis para a demonstração visual:
-                if ($prodCount % 10 === 0) {
-                    // 10% Zerado
-                    $qtdAtual = 0;
-                    $qtdMin = 30;
-                    EstoqueLote::where('setor_id', $setorEstoque->id)
-                        ->where('produto_id', $produto->id)
-                        ->update(['quantidade_disponivel' => 0]);
-                } elseif ($prodCount % 5 === 0) {
-                    // 20% Abaixo do Mínimo (Alerta de Reposição)
-                    $qtdMin = 100;
-                    $qtdAtual = min($saldoLotes, 35);
-                    if ($qtdAtual == 0) $qtdAtual = 25;
-                    // Ajustar saldo nos lotes se necessário
-                    $lotePrimeiro = EstoqueLote::where('setor_id', $setorEstoque->id)
-                        ->where('produto_id', $produto->id)
-                        ->first();
-                    if ($lotePrimeiro) {
-                        $lotePrimeiro->update(['quantidade_disponivel' => $qtdAtual]);
-                    } elseif ($setorEstoque->id === $cafHgvc->id) {
-                        EstoqueLote::create([
-                            'setor_id'              => $setorEstoque->id,
-                            'produto_id'            => $produto->id,
-                            'lote'                  => 'LOTE-ALERTA-' . $prodCount,
-                            'quantidade_disponivel' => $qtdAtual,
-                            'data_vencimento'       => Carbon::now()->addMonths(12)->toDateString(),
-                        ]);
-                    }
-                } else {
-                    // 70% Nível Ideal
-                    $qtdMin = 50;
-                    $qtdAtual = max($saldoLotes, 180);
-                    // Assegura lote para os que estão na Farmácia Satélite
-                    if ($saldoLotes < $qtdAtual && ($setorEstoque->id === $farmSateliteHgvc->id || $setorEstoque->id === $farmSateliteHap->id)) {
-                        $qtdAtual = 80;
-                        $qtdMin = 20;
-                        EstoqueLote::updateOrCreate(
-                            [
-                                'setor_id'   => $setorEstoque->id,
-                                'produto_id' => $produto->id,
-                                'lote'       => 'SAT-LOTE-' . $prodCount,
-                            ],
-                            [
-                                'quantidade_disponivel' => $qtdAtual,
-                                'data_vencimento'       => Carbon::now()->addMonths(16)->toDateString(),
-                            ]
-                        );
-                    }
-                }
-
-                // Invariante técnica estrita: soma dos lotes rigorosamente idêntica a estoque.quantidade_atual
-                $qtdAtual = (int) EstoqueLote::where('setor_id', $setorEstoque->id)
-                    ->where('produto_id', $produto->id)
-                    ->sum('quantidade_disponivel');
-
-                Estoque::updateOrCreate(
-                    [
-                        'setor_id'   => $setorEstoque->id,
-                        'produto_id' => $produto->id,
-                    ],
-                    [
-                        'quantidade_atual'       => $qtdAtual,
-                        'quantidade_minima'      => $qtdMin,
-                        'status_disponibilidade' => $qtdAtual > 0 ? 'D' : 'I',
-                        'localizacao'            => 'Prateleira ' . chr(65 + ($prodCount % 6)) . '-' . ($prodCount % 4 + 1),
-                        'created_at'             => Carbon::now()->subDays(60),
-                        'updated_at'             => Carbon::now(),
-                    ]
-                );
+                EstoqueLote::create([
+                    'setor_id'              => $almoxHap->id,
+                    'produto_id'            => $produto->id,
+                    'lote'                  => $loteNome,
+                    'quantidade_disponivel' => $qtd,
+                    'valor_unitario'        => $valorUn,
+                    'data_fabricacao'       => $dataFab,
+                    'data_vencimento'       => $dataVenc,
+                    'created_at'            => $dataEmissao,
+                    'updated_at'            => $dataEmissao,
+                ]);
             }
         }
 
         // =====================================================================
-        // 6. CICLO COMPLETO DE MOVIMENTAÇÕES HOSPITALARES (TODOS OS TIPOS E STATUS)
+        // 6. CICLO COMPLETO DE MOVIMENTAÇÕES HOSPITALARES COM RASTREABILIDADE
         // =====================================================================
-        $this->command->info('🔄 [5/5] Registrando movimentações clínicas, pedidos rascunho, FIFO, devoluções e quebras...');
+        $this->command->info('🔄 [5/6] Executando transferências, solicitações clínicas, FIFO e devoluções auditadas...');
 
-        // 6.1 Transferência Concluída (Status 'A', D-35): CAF -> UTI Adulto
+        // Helper para debitar quantidade de um lote físico com consistência
+        $debitarLote = function($setorId, $produtoId, $loteNome, $quantidade) {
+            $lote = EstoqueLote::where('setor_id', $setorId)
+                ->where('produto_id', $produtoId)
+                ->where('lote', $loteNome)
+                ->first();
+
+            if ($lote) {
+                $novaQtd = max(0, $lote->quantidade_disponivel - $quantidade);
+                $lote->update(['quantidade_disponivel' => $novaQtd]);
+                return $lote;
+            }
+            return null;
+        };
+
+        // Helper para creditar/estornar quantidade em lote físico
+        $creditarLote = function($setorId, $produtoId, $loteNome, $quantidade, $valorUn = null, $dataVenc = null) use ($now) {
+            $lote = EstoqueLote::where('setor_id', $setorId)
+                ->where('produto_id', $produtoId)
+                ->where('lote', $loteNome)
+                ->first();
+
+            if ($lote) {
+                $lote->update(['quantidade_disponivel' => $lote->quantidade_disponivel + $quantidade]);
+                return $lote;
+            } else {
+                return EstoqueLote::create([
+                    'setor_id'              => $setorId,
+                    'produto_id'            => $produtoId,
+                    'lote'                  => $loteNome,
+                    'quantidade_disponivel' => $quantidade,
+                    'valor_unitario'        => $valorUn ?? 0,
+                    'data_vencimento'       => $dataVenc ?? Carbon::now()->addYear()->toDateString(),
+                    'created_at'            => $now,
+                    'updated_at'            => $now,
+                ]);
+            }
+        };
+
+        // ---------------------------------------------------------------------
+        // 6.1 Ressuprimento Entre Estoques (D-50): CAF HGVC -> Farmácia Satélite Centro Cirúrgico
+        // ---------------------------------------------------------------------
+        $movRessupHgvc = Movimentacao::create([
+            'usuario_id'           => $userAlmoxCaf->id,
+            'aprovador_usuario_id' => $userAlmoxCaf->id,
+            'setor_origem_id'      => $cafHgvc->id,
+            'setor_destino_id'     => $farmSateliteHgvc->id,
+            'tipo'                 => 'T',
+            'data_hora'            => Carbon::now()->subDays(50),
+            'status_solicitacao'   => 'A',
+            'observacao'           => 'Ressuprimento programado entre estoques: CAF para Farmácia Satélite Centro Cirúrgico',
+        ]);
+
+        $itensRessup = [
+            ['DIPIRONA_AMP', 'LOTE-DIP-24A', 200, 1.85, 700],
+            ['SERINGA_10',   'LOTE-SER-36',  500, 0.75, 1080],
+            ['MORFINA',      'LOTE-MORF-12',  80, 8.90, 360],
+            ['ALFENTANILA',  'LOTE-ALF-24A',  40, 14.50, 450],
+            ['SORO_FISIO',   'LOTE-SOR-18',  100, 6.40, 540],
+        ];
+
+        foreach ($itensRessup as [$pKey, $loteNome, $qtd, $valorUn, $diasVenc]) {
+            $produto = $produtosDemo[$pKey];
+            $dataVenc = Carbon::now()->addDays($diasVenc)->toDateString();
+
+            ItemMovimentacao::create([
+                'movimentacao_id'       => $movRessupHgvc->id,
+                'produto_id'            => $produto->id,
+                'quantidade_solicitada' => $qtd,
+                'quantidade_liberada'   => $qtd,
+                'lote'                  => json_encode([['lote' => $loteNome, 'qtd' => $qtd, 'data_vencimento' => $dataVenc]]),
+                'created_at'            => Carbon::now()->subDays(50),
+                'updated_at'            => Carbon::now()->subDays(50),
+            ]);
+
+            // Debita da CAF e credita na Farmácia Satélite com rastreabilidade do mesmo lote do fabricante
+            $debitarLote($cafHgvc->id, $produto->id, $loteNome, $qtd);
+            $creditarLote($farmSateliteHgvc->id, $produto->id, $loteNome, $qtd, $valorUn, $dataVenc);
+        }
+
+        // ---------------------------------------------------------------------
+        // 6.2 Pedido de Prescrições Atendido (D-35): CAF HGVC -> UTI Adulto
+        // ---------------------------------------------------------------------
         $movConcluida1 = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => $userAlmoxCaf->id,
@@ -539,10 +563,10 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'T',
             'data_hora'            => Carbon::now()->subDays(35),
             'status_solicitacao'   => 'A',
-            'observacao'           => 'Atendimento regular de plantão hospitalar',
+            'observacao'           => 'Atendimento de prescrições hospitalares do plantão médico da UTI Adulto',
         ]);
 
-        $itemPedOriginal1 = ItemMovimentacao::create([
+        $itemPedDipirona = ItemMovimentacao::create([
             'movimentacao_id'       => $movConcluida1->id,
             'produto_id'            => $produtosDemo['DIPIRONA_AMP']->id,
             'quantidade_solicitada' => 50,
@@ -551,6 +575,7 @@ class DemonstracaoSistemaSeeder extends Seeder
             'created_at'            => Carbon::now()->subDays(35),
             'updated_at'            => Carbon::now()->subDays(35),
         ]);
+        $debitarLote($cafHgvc->id, $produtosDemo['DIPIRONA_AMP']->id, 'LOTE-DIP-24A', 50);
 
         ItemMovimentacao::create([
             'movimentacao_id'       => $movConcluida1->id,
@@ -561,8 +586,8 @@ class DemonstracaoSistemaSeeder extends Seeder
             'created_at'            => Carbon::now()->subDays(35),
             'updated_at'            => Carbon::now()->subDays(35),
         ]);
+        $debitarLote($cafHgvc->id, $produtosDemo['SERINGA_10']->id, 'LOTE-SER-36', 100);
 
-        // Item de medicamento de controle especial (Portaria 344) para enriquecer relatórios
         ItemMovimentacao::create([
             'movimentacao_id'       => $movConcluida1->id,
             'produto_id'            => $produtosDemo['DIAZEPAM']->id,
@@ -572,8 +597,11 @@ class DemonstracaoSistemaSeeder extends Seeder
             'created_at'            => Carbon::now()->subDays(35),
             'updated_at'            => Carbon::now()->subDays(35),
         ]);
+        $debitarLote($cafHgvc->id, $produtosDemo['DIAZEPAM']->id, 'LOTE-DZP-18', 20);
 
-        // 6.2 Devolução Concluída (Status 'A', D-20): UTI Adulto -> CAF vinculada ao pedido original #$movConcluida1->id
+        // ---------------------------------------------------------------------
+        // 6.3 Devolução Auditada Concluída (D-20): UTI Adulto -> CAF HGVC (Origem Pedido #$movConcluida1->id)
+        // ---------------------------------------------------------------------
         $movDevolucaoAprovada = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => $userAlmoxCaf->id,
@@ -582,7 +610,7 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'D',
             'data_hora'            => Carbon::now()->subDays(20),
             'status_solicitacao'   => 'A',
-            'observacao'           => 'Devolução originada do pedido #' . $movConcluida1->id . ' - Sobra de procedimento cirúrgico',
+            'observacao'           => 'Devolução originada do pedido #' . $movConcluida1->id . ' - Sobra de procedimento por transferência de paciente',
         ]);
 
         ItemMovimentacao::create([
@@ -598,21 +626,60 @@ class DemonstracaoSistemaSeeder extends Seeder
 
         Devolucao::create([
             'movimentacao_id'       => $movConcluida1->id,
-            'item_movimentacao_id'  => $itemPedOriginal1->id,
+            'item_movimentacao_id'  => $itemPedDipirona->id,
             'lote'                  => 'LOTE-DIP-24A',
             'quantidade'            => 15,
             'quantidade_solicitada' => 15,
             'quantidade_aprovada'   => 15,
             'usuario_id'            => $userSolicUti->id,
-            'motivo'                => 'Sobra de procedimento cirúrgico',
+            'motivo'                => 'Sobra de procedimento por transferência de paciente',
             'created_at'            => Carbon::now()->subDays(20),
             'updated_at'            => Carbon::now()->subDays(20),
         ]);
 
-        // Atualizar saldo já devolvido no pedido original
-        $itemPedOriginal1->update(['quantidade_devolvendo' => 15]);
+        // Atualiza quantidade já devolvida no item original e estorna lote na CAF
+        $itemPedDipirona->update(['quantidade_devolvendo' => 15]);
+        $creditarLote($cafHgvc->id, $produtosDemo['DIPIRONA_AMP']->id, 'LOTE-DIP-24A', 15);
 
-        // 6.3 Atendimento Parcial com Item Zerado (Status 'A', D-12): CAF -> UTI Adulto
+        // ---------------------------------------------------------------------
+        // 6.4 Atendimento Rápido de Urgência (D-15): Farmácia Satélite -> UTI Adulto
+        // ---------------------------------------------------------------------
+        $movSateliteAtendida = Movimentacao::create([
+            'usuario_id'           => $userSolicUti->id,
+            'aprovador_usuario_id' => $userAlmoxCaf->id,
+            'setor_origem_id'      => $farmSateliteHgvc->id,
+            'setor_destino_id'     => $utiHgvc->id,
+            'tipo'                 => 'T',
+            'data_hora'            => Carbon::now()->subDays(15),
+            'status_solicitacao'   => 'A',
+            'observacao'           => 'Dispensação imediata da Farmácia Satélite para intubação de urgência na UTI',
+        ]);
+
+        ItemMovimentacao::create([
+            'movimentacao_id'       => $movSateliteAtendida->id,
+            'produto_id'            => $produtosDemo['MORFINA']->id,
+            'quantidade_solicitada' => 10,
+            'quantidade_liberada'   => 10,
+            'lote'                  => json_encode([['lote' => 'LOTE-MORF-12', 'qtd' => 10, 'data_vencimento' => Carbon::now()->addDays(360)->toDateString()]]),
+            'created_at'            => Carbon::now()->subDays(15),
+            'updated_at'            => Carbon::now()->subDays(15),
+        ]);
+        $debitarLote($farmSateliteHgvc->id, $produtosDemo['MORFINA']->id, 'LOTE-MORF-12', 10);
+
+        ItemMovimentacao::create([
+            'movimentacao_id'       => $movSateliteAtendida->id,
+            'produto_id'            => $produtosDemo['ALFENTANILA']->id,
+            'quantidade_solicitada' => 8,
+            'quantidade_liberada'   => 8,
+            'lote'                  => json_encode([['lote' => 'LOTE-ALF-24A', 'qtd' => 8, 'data_vencimento' => Carbon::now()->addDays(450)->toDateString()]]),
+            'created_at'            => Carbon::now()->subDays(15),
+            'updated_at'            => Carbon::now()->subDays(15),
+        ]);
+        $debitarLote($farmSateliteHgvc->id, $produtosDemo['ALFENTANILA']->id, 'LOTE-ALF-24A', 8);
+
+        // ---------------------------------------------------------------------
+        // 6.5 Atendimento Parcial por Desabastecimento (D-12): CAF HGVC -> UTI Adulto
+        // ---------------------------------------------------------------------
         $movParcial = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => $userAlmoxCaf->id,
@@ -621,10 +688,9 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'T',
             'data_hora'            => Carbon::now()->subDays(12),
             'status_solicitacao'   => 'A',
-            'observacao'           => 'Atendimento parcial por desabastecimento temporário de Omeprazol',
+            'observacao'           => 'Atendimento parcial por contingenciamento temporário no almoxarifado central',
         ]);
 
-        // Item 1: Atendido 100%
         ItemMovimentacao::create([
             'movimentacao_id'       => $movParcial->id,
             'produto_id'            => $produtosDemo['CEFTRIAXONA']->id,
@@ -634,8 +700,9 @@ class DemonstracaoSistemaSeeder extends Seeder
             'created_at'            => Carbon::now()->subDays(12),
             'updated_at'            => Carbon::now()->subDays(12),
         ]);
+        $debitarLote($cafHgvc->id, $produtosDemo['CEFTRIAXONA']->id, 'LOTE-CEF-24', 20);
 
-        // Item 2: Quantidade ZERO liberada (desabastecimento com preservação de histórico)
+        // Item desabastecido: liberado 0 com histórico preservado
         ItemMovimentacao::create([
             'movimentacao_id'       => $movParcial->id,
             'produto_id'            => $produtosDemo['OMEPRAZOL']->id,
@@ -646,16 +713,43 @@ class DemonstracaoSistemaSeeder extends Seeder
             'updated_at'            => Carbon::now()->subDays(12),
         ]);
 
-        // 6.4 Pedido Reprovado com Justificativa (Status 'R', D-10): Farmácia Satélite HGVC -> UTI
+        // ---------------------------------------------------------------------
+        // 6.6 Consumo Interno / Quebra por Avaria na CAF (D-10):
+        // ---------------------------------------------------------------------
+        $movConsumo = Movimentacao::create([
+            'usuario_id'           => $userAlmoxCaf->id,
+            'aprovador_usuario_id' => $userAlmoxCaf->id,
+            'setor_origem_id'      => $cafHgvc->id,
+            'setor_destino_id'     => $cafHgvc->id,
+            'tipo'                 => 'C',
+            'data_hora'            => Carbon::now()->subDays(10),
+            'status_solicitacao'   => 'A',
+            'observacao'           => 'Baixa Interna: 2 ampolas de Haloperidol quebradas acidentalmente durante reorganização de gaveteiro.',
+        ]);
+
+        ItemMovimentacao::create([
+            'movimentacao_id'       => $movConsumo->id,
+            'produto_id'            => $produtosDemo['HALOPERIDOL']->id,
+            'quantidade_solicitada' => 2,
+            'quantidade_liberada'   => 2,
+            'lote'                  => json_encode([['lote' => 'LOTE-HAL-24', 'qtd' => 2, 'data_vencimento' => Carbon::now()->addDays(720)->toDateString()]]),
+            'created_at'            => Carbon::now()->subDays(10),
+            'updated_at'            => Carbon::now()->subDays(10),
+        ]);
+        $debitarLote($cafHgvc->id, $produtosDemo['HALOPERIDOL']->id, 'LOTE-HAL-24', 2);
+
+        // ---------------------------------------------------------------------
+        // 6.7 Pedido Reprovado pelo Almoxarife com Justificativa (D-7): CAF HGVC -> UTI
+        // ---------------------------------------------------------------------
         $movReprovada = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => $userAlmoxCaf->id,
-            'setor_origem_id'      => $farmSateliteHgvc->id,
+            'setor_origem_id'      => $cafHgvc->id,
             'setor_destino_id'     => $utiHgvc->id,
             'tipo'                 => 'T',
-            'data_hora'            => Carbon::now()->subDays(10),
+            'data_hora'            => Carbon::now()->subDays(7),
             'status_solicitacao'   => 'R',
-            'observacao'           => 'Reprovado pelo almoxarife: cota setorial mensal atingida. Requer autorização da coordenação.',
+            'observacao'           => 'Reprovado pelo almoxarife: cota mensal de entorpecentes atingida para a UTI. Favor solicitar parecer da coordenação médica.',
         ]);
 
         ItemMovimentacao::create([
@@ -664,33 +758,37 @@ class DemonstracaoSistemaSeeder extends Seeder
             'quantidade_solicitada' => 40,
             'quantidade_liberada'   => 0,
             'lote'                  => null,
-            'created_at'            => Carbon::now()->subDays(10),
-            'updated_at'            => Carbon::now()->subDays(10),
+            'created_at'            => Carbon::now()->subDays(7),
+            'updated_at'            => Carbon::now()->subDays(7),
         ]);
 
-        // 6.5 Pedido Cancelado pelo Solicitante (Status 'X', D-15):
+        // ---------------------------------------------------------------------
+        // 6.8 Pedido Cancelado pelo Solicitante (D-4): Farmácia Satélite -> UTI
+        // ---------------------------------------------------------------------
         $movCancelada = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => null,
-            'setor_origem_id'      => $cafHgvc->id,
+            'setor_origem_id'      => $farmSateliteHgvc->id,
             'setor_destino_id'     => $utiHgvc->id,
             'tipo'                 => 'T',
-            'data_hora'            => Carbon::now()->subDays(15),
+            'data_hora'            => Carbon::now()->subDays(4),
             'status_solicitacao'   => 'X',
-            'observacao'           => 'Cancelado pelo solicitante: paciente transferido antes da dispensação da medicação.',
+            'observacao'           => 'Cancelado pelo solicitante: prescrição médica substituída antes da dispensação na farmácia.',
         ]);
 
         ItemMovimentacao::create([
             'movimentacao_id'       => $movCancelada->id,
-            'produto_id'            => $produtosDemo['ALFENTANILA']->id,
+            'produto_id'            => $produtosDemo['HALOPERIDOL']->id,
             'quantidade_solicitada' => 10,
             'quantidade_liberada'   => 0,
             'lote'                  => null,
-            'created_at'            => Carbon::now()->subDays(15),
-            'updated_at'            => Carbon::now()->subDays(15),
+            'created_at'            => Carbon::now()->subDays(4),
+            'updated_at'            => Carbon::now()->subDays(4),
         ]);
 
-        // 6.6 Pedido Pendente Aguardando Triagem (Status 'P', D-1): UTI -> CAF
+        // ---------------------------------------------------------------------
+        // 6.9 Pedido Pendente para Triagem (D-1 / Ontem): CAF HGVC -> UTI
+        // ---------------------------------------------------------------------
         $movPendente = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => null,
@@ -699,7 +797,7 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'T',
             'data_hora'            => Carbon::now()->subDay(),
             'status_solicitacao'   => 'P',
-            'observacao'           => 'Reposição diária para prescrições das 20h',
+            'observacao'           => 'Reposição noturna diária para pacientes internados nos leitos 01 a 10',
         ]);
 
         ItemMovimentacao::create([
@@ -721,7 +819,9 @@ class DemonstracaoSistemaSeeder extends Seeder
             'updated_at'            => Carbon::now()->subDay(),
         ]);
 
-        // 6.7 Rascunho Aberto no Dia Atual (Status 'C', Hoje):
+        // ---------------------------------------------------------------------
+        // 6.10 Pedido Rascunho Aberto no Plantão Atual (Hoje): CAF HGVC -> UTI
+        // ---------------------------------------------------------------------
         $movRascunho = Movimentacao::create([
             'usuario_id'           => $userSolicUti->id,
             'aprovador_usuario_id' => null,
@@ -730,7 +830,7 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'T',
             'data_hora'            => Carbon::now(),
             'status_solicitacao'   => 'C',
-            'observacao'           => 'Rascunho em edição pelo enfermeiro de plantão',
+            'observacao'           => 'Rascunho de pedido do plantão diurno em elaboração pelo enfermeiro assistencial',
         ]);
 
         ItemMovimentacao::create([
@@ -743,31 +843,11 @@ class DemonstracaoSistemaSeeder extends Seeder
             'updated_at'            => Carbon::now(),
         ]);
 
-        // 6.8 Consumo Interno / Baixa por Quebra na CAF (Tipo 'C', D-18):
-        $movConsumo = Movimentacao::create([
-            'usuario_id'           => $userAlmoxCaf->id,
-            'aprovador_usuario_id' => $userAlmoxCaf->id,
-            'setor_origem_id'      => $cafHgvc->id,
-            'setor_destino_id'     => $cafHgvc->id,
-            'tipo'                 => 'C',
-            'data_hora'            => Carbon::now()->subDays(18),
-            'status_solicitacao'   => 'A',
-            'observacao'           => 'Baixa Interna/Consumo: Frasco de Haloperidol avariado durante reorganização de gaveteiro.',
-        ]);
-
-        ItemMovimentacao::create([
-            'movimentacao_id'       => $movConsumo->id,
-            'produto_id'            => $produtosDemo['HALOPERIDOL']->id,
-            'quantidade_solicitada' => 2,
-            'quantidade_liberada'   => 2,
-            'lote'                  => json_encode([['lote' => 'LOTE-HAL-24', 'qtd' => 2, 'data_vencimento' => Carbon::now()->addDays(720)->toDateString()]]),
-            'created_at'            => Carbon::now()->subDays(18),
-            'updated_at'            => Carbon::now()->subDays(18),
-        ]);
-
-        // 6.9 Movimentações no Polo Menor (HAP):
-        // Pedido atendido do Almoxarifado Central HAP para a Farmácia Satélite HAP (D-25)
-        $movHapAtendida = Movimentacao::create([
+        // ---------------------------------------------------------------------
+        // 6.11 Cenários no Polo HAP (Hospital Afrânio Peixoto):
+        // ---------------------------------------------------------------------
+        // Ressuprimento Almoxarifado Central HAP -> Farmácia Satélite HAP (D-25, Atendido)
+        $movHapRessup = Movimentacao::create([
             'usuario_id'           => $userAlmoxHap->id,
             'aprovador_usuario_id' => $userAlmoxHap->id,
             'setor_origem_id'      => $almoxHap->id,
@@ -775,20 +855,57 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'T',
             'data_hora'            => Carbon::now()->subDays(25),
             'status_solicitacao'   => 'A',
-            'observacao'           => 'Ressuprimento quinzenal da farmácia satélite HAP',
+            'observacao'           => 'Ressuprimento quinzenal da Farmácia Satélite HAP',
+        ]);
+
+        $itensRessupHap = [
+            ['DIPIRONA_AMP', 'LOTE-HAP-DIP', 100, 1.85, 500],
+            ['PARACETAMOL',  'LOTE-HAP-PCT', 100, 0.30, 480],
+            ['SERINGA_10',   'LOTE-HAP-SER', 300, 0.75, 900],
+        ];
+
+        foreach ($itensRessupHap as [$pKey, $loteNome, $qtd, $valorUn, $diasVenc]) {
+            $produto = $produtosDemo[$pKey];
+            $dataVenc = Carbon::now()->addDays($diasVenc)->toDateString();
+
+            ItemMovimentacao::create([
+                'movimentacao_id'       => $movHapRessup->id,
+                'produto_id'            => $produto->id,
+                'quantidade_solicitada' => $qtd,
+                'quantidade_liberada'   => $qtd,
+                'lote'                  => json_encode([['lote' => $loteNome, 'qtd' => $qtd, 'data_vencimento' => $dataVenc]]),
+                'created_at'            => Carbon::now()->subDays(25),
+                'updated_at'            => Carbon::now()->subDays(25),
+            ]);
+
+            $debitarLote($almoxHap->id, $produto->id, $loteNome, $qtd);
+            $creditarLote($farmSateliteHap->id, $produto->id, $loteNome, $qtd, $valorUn, $dataVenc);
+        }
+
+        // Pedido Atendido: Farmácia Satélite HAP -> Clínica Médica HAP (D-15)
+        $movHapAtendida = Movimentacao::create([
+            'usuario_id'           => $userSolicHap->id,
+            'aprovador_usuario_id' => $userAlmoxHap->id,
+            'setor_origem_id'      => $farmSateliteHap->id,
+            'setor_destino_id'     => $clinicaMedicaHap->id,
+            'tipo'                 => 'T',
+            'data_hora'            => Carbon::now()->subDays(15),
+            'status_solicitacao'   => 'A',
+            'observacao'           => 'Dispensação regular de analgésicos para enfermaria da Clínica HAP',
         ]);
 
         $itemHapOrig = ItemMovimentacao::create([
             'movimentacao_id'       => $movHapAtendida->id,
             'produto_id'            => $produtosDemo['DIPIRONA_AMP']->id,
-            'quantidade_solicitada' => 60,
-            'quantidade_liberada'   => 60,
-            'lote'                  => json_encode([['lote' => 'LOTE-HAP-DIP', 'qtd' => 60, 'data_vencimento' => Carbon::now()->addDays(500)->toDateString()]]),
-            'created_at'            => Carbon::now()->subDays(25),
-            'updated_at'            => Carbon::now()->subDays(25),
+            'quantidade_solicitada' => 40,
+            'quantidade_liberada'   => 40,
+            'lote'                  => json_encode([['lote' => 'LOTE-HAP-DIP', 'qtd' => 40, 'data_vencimento' => Carbon::now()->addDays(500)->toDateString()]]),
+            'created_at'            => Carbon::now()->subDays(15),
+            'updated_at'            => Carbon::now()->subDays(15),
         ]);
+        $debitarLote($farmSateliteHap->id, $produtosDemo['DIPIRONA_AMP']->id, 'LOTE-HAP-DIP', 40);
 
-        // Devolução pendente (Status 'P', D-2): Clínica Médica HAP -> Farmácia Satélite HAP
+        // Devolução Pendente (D-2): Clínica Médica HAP -> Farmácia Satélite HAP
         $movDevolucaoPendenteHap = Movimentacao::create([
             'usuario_id'           => $userSolicHap->id,
             'aprovador_usuario_id' => null,
@@ -797,7 +914,7 @@ class DemonstracaoSistemaSeeder extends Seeder
             'tipo'                 => 'D',
             'data_hora'            => Carbon::now()->subDays(2),
             'status_solicitacao'   => 'P',
-            'observacao'           => 'Devolução originada do pedido #' . $movHapAtendida->id . ' - Frascos lacrados não administrados',
+            'observacao'           => 'Devolução originada do pedido #' . $movHapAtendida->id . ' - 8 ampolas lacradas não administradas',
         ]);
 
         ItemMovimentacao::create([
@@ -819,9 +936,52 @@ class DemonstracaoSistemaSeeder extends Seeder
             'quantidade_solicitada' => 8,
             'quantidade_aprovada'   => null,
             'usuario_id'            => $userSolicHap->id,
-            'motivo'                => 'Frascos lacrados não administrados',
+            'motivo'                => 'Frascos lacrados não administrados ao paciente',
             'created_at'            => Carbon::now()->subDays(2),
             'updated_at'            => Carbon::now()->subDays(2),
         ]);
+
+        // =====================================================================
+        // 7. INVARIANTE MATEMÁTICA E CONSOLIDAÇÃO DO ESTOQUE
+        // =====================================================================
+        $this->command->info('📊 [6/6] Consolidando tabelas de estoque e curvas de suprimento com 100% de consistência...');
+
+        $setoresComEstoque = [$cafHgvc, $farmSateliteHgvc, $almoxHap, $farmSateliteHap];
+
+        foreach ($setoresComEstoque as $setorEstoque) {
+            $prodCount = 0;
+            foreach ($produtosDemo as $pKey => $produto) {
+                $prodCount++;
+
+                // A soma exata dos lotes físicos reais comanda o estoque atual
+                $qtdAtual = (int) EstoqueLote::where('setor_id', $setorEstoque->id)
+                    ->where('produto_id', $produto->id)
+                    ->sum('quantidade_disponivel');
+
+                // Define ponto de reposição para simular alertas clínicos
+                if ($qtdAtual === 0) {
+                    $qtdMin = 30; // Alerta: Zerado
+                } elseif ($qtdAtual <= 40) {
+                    $qtdMin = 50; // Alerta: Abaixo do Mínimo (Reposição)
+                } else {
+                    $qtdMin = 30; // Saudável
+                }
+
+                Estoque::updateOrCreate(
+                    [
+                        'setor_id'   => $setorEstoque->id,
+                        'produto_id' => $produto->id,
+                    ],
+                    [
+                        'quantidade_atual'       => $qtdAtual,
+                        'quantidade_minima'      => $qtdMin,
+                        'status_disponibilidade' => $qtdAtual > 0 ? 'D' : 'I',
+                        'localizacao'            => 'Prateleira ' . chr(65 + ($prodCount % 6)) . '-' . ($prodCount % 4 + 1),
+                        'created_at'             => Carbon::now()->subDays(60),
+                        'updated_at'             => Carbon::now(),
+                    ]
+                );
+            }
+        }
     }
 }

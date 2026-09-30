@@ -14,7 +14,6 @@ use App\Models\ItemMovimentacao;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Database\Seeders\CatalogoProdutosOficialSeeder;
 use Laravel\Sanctum\Sanctum;
 
@@ -38,17 +37,47 @@ class DevolucaoFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
             CatalogoProdutosOficialSeeder::class,
         ]);
 
-        $this->solicitanteClinica = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
-        $this->almoxarifeFarmacia = User::where('email', 'arthuralmoxarife@gmail.com')->firstOrFail();
         $this->adminCaf = User::where('email', 'adminti@gmail.com')->firstOrFail();
-
         $this->clinicaMedica = Setores::where('nome', 'CLÍNICA MÉDICA')->firstOrFail();
         $this->farmaciaDispensacao = Setores::where('nome', 'FARMÁCIA DE DISPENSAÇÃO')->firstOrFail();
         $this->caf = Setores::where('nome', 'CENTRAL DE ABASTECIMENTO FARMACÊUTICO (CAF)')->firstOrFail();
+
+        $regimeId = \Illuminate\Support\Facades\DB::table('regime_contratacao')->value('id') ?? 1;
+
+        $this->solicitanteClinica = User::create([
+            'name'                  => 'SOLICITANTE CLINICA',
+            'email'                 => 'solicitante.dev@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '77777777771',
+            'telefone'              => '77999990071',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->solicitanteClinica->id,
+            'setor_id'   => $this->clinicaMedica->id,
+            'perfil'     => 'solicitante',
+        ]);
+
+        $this->almoxarifeFarmacia = User::create([
+            'name'                  => 'ALMOXARIFE FARMACIA',
+            'email'                 => 'almoxarife.dev@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '77777777772',
+            'telefone'              => '77999990072',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            ['usuario_id' => $this->almoxarifeFarmacia->id, 'setor_id' => $this->farmaciaDispensacao->id, 'perfil' => 'almoxarife'],
+            ['usuario_id' => $this->almoxarifeFarmacia->id, 'setor_id' => $this->caf->id, 'perfil' => 'almoxarife'],
+        ]);
+
         $this->produto = Produto::firstOrFail();
     }
 

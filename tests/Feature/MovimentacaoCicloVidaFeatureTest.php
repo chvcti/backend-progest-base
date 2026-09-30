@@ -15,7 +15,6 @@ use App\Models\ItemMovimentacao;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Database\Seeders\CatalogoProdutosOficialSeeder;
 use Illuminate\Support\Facades\DB;
 
@@ -38,17 +37,47 @@ class MovimentacaoCicloVidaFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
             CatalogoProdutosOficialSeeder::class,
         ]);
 
-        // 2. Usuários padrão de teste
-        $this->solicitante = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
-        $this->almoxarife  = User::where('email', 'arthuralmoxarife@gmail.com')->firstOrFail();
-
-        // 3. Setores: Distribuidor (Farmácia com estoque) e Consumidor (Clínica sem estoque)
+        // 2. Setores: Distribuidor (Farmácia com estoque) e Consumidor (Clínica sem estoque)
         $this->setorDistribuidor = Setores::where('nome', 'FARMÁCIA DE DISPENSAÇÃO')->where('estoque', true)->firstOrFail();
         $this->setorConsumidor   = Setores::where('nome', 'CLÍNICA MÉDICA')->where('estoque', false)->firstOrFail();
+
+        // 3. Usuários padrão de teste
+        $regimeId = \Illuminate\Support\Facades\DB::table('regime_contratacao')->value('id') ?? 1;
+
+        $this->solicitante = User::create([
+            'name'                  => 'SOLICITANTE TESTE',
+            'email'                 => 'solicitante.mov@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '66666666661',
+            'telefone'              => '77999990061',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->solicitante->id,
+            'setor_id'   => $this->setorConsumidor->id,
+            'perfil'     => 'solicitante',
+        ]);
+
+        $this->almoxarife = User::create([
+            'name'                  => 'ALMOXARIFE TESTE',
+            'email'                 => 'almoxarife.mov@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '66666666662',
+            'telefone'              => '77999990062',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->almoxarife->id,
+            'setor_id'   => $this->setorDistribuidor->id,
+            'perfil'     => 'almoxarife',
+        ]);
 
         // 4. Produto do catálogo oficial
         $this->produto = Produto::firstOrFail();

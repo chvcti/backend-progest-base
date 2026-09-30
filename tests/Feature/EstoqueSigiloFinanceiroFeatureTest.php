@@ -13,7 +13,6 @@ use App\Models\EstoqueLote;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Database\Seeders\CatalogoProdutosOficialSeeder;
 
 class EstoqueSigiloFinanceiroFeatureTest extends TestCase
@@ -38,22 +37,67 @@ class EstoqueSigiloFinanceiroFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
             CatalogoProdutosOficialSeeder::class,
         ]);
 
-        // 2. Resgata usuários padrão
-        $this->superAdmin  = User::where('email', 'adminti@gmail.com')->firstOrFail();
-        $this->adminComum  = User::where('email', 'pabloadmin@gmail.com')->firstOrFail();
-        $this->almoxarife  = User::where('email', 'arthuralmoxarife@gmail.com')->firstOrFail();
-        $this->solicitante = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
+        // 2. Resgata superAdmin
+        $this->superAdmin = User::where('email', 'adminti@gmail.com')->firstOrFail();
 
         // 3. Resgata setores-chave
         $this->cafSetor            = Setores::where('nome', 'CENTRAL DE ABASTECIMENTO FARMACÊUTICO (CAF)')->firstOrFail();
         $this->farmaciaDispensacao = Setores::where('nome', 'FARMÁCIA DE DISPENSAÇÃO')->firstOrFail();
         $this->setorSemEstoque     = Setores::where('nome', 'CLÍNICA MÉDICA')->where('estoque', false)->firstOrFail();
 
-        // 4. Produto de referência
+        // 4. Cria usuários de teste isolados
+        $regimeId = \Illuminate\Support\Facades\DB::table('regime_contratacao')->value('id') ?? 1;
+
+        $this->adminComum = User::create([
+            'name'                  => 'ADMIN COMUM TESTE',
+            'email'                 => 'admin.comum@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '44444444441',
+            'telefone'              => '77999990011',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->adminComum->id,
+            'setor_id'   => $this->cafSetor->id,
+            'perfil'     => 'admin',
+        ]);
+
+        $this->almoxarife = User::create([
+            'name'                  => 'ALMOXARIFE TESTE',
+            'email'                 => 'almoxarife.teste@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '44444444442',
+            'telefone'              => '77999990012',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            ['usuario_id' => $this->almoxarife->id, 'setor_id' => $this->cafSetor->id, 'perfil' => 'almoxarife'],
+            ['usuario_id' => $this->almoxarife->id, 'setor_id' => $this->farmaciaDispensacao->id, 'perfil' => 'almoxarife'],
+        ]);
+
+        $this->solicitante = User::create([
+            'name'                  => 'SOLICITANTE TESTE',
+            'email'                 => 'solicitante.teste@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '44444444443',
+            'telefone'              => '77999990013',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            ['usuario_id' => $this->solicitante->id, 'setor_id' => $this->cafSetor->id, 'perfil' => 'solicitante'],
+            ['usuario_id' => $this->solicitante->id, 'setor_id' => $this->setorSemEstoque->id, 'perfil' => 'solicitante'],
+        ]);
+
+        // 5. Produto de referência
         $this->produto = Produto::firstOrFail();
     }
 

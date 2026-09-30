@@ -42,19 +42,28 @@ O Laravel e seus pacotes de Excel exigem extensões que vêm desativadas por pad
    php artisan key:generate
    php artisan migrate
    ```
-7. **Povoar o Banco de Dados:** Você possui 2 opções oficiais consolidadas:
-   - **Opção A — Produção / Base Limpa (Padrão):**
-     Executa a migração completa, cataloga os polos, os 62 setores oficiais limpos, regimes de contratação, unidades de medida, grupos, fornecedores homologados e o catálogo oficial completo de produtos (417 itens), contendo apenas o usuário Super Admin raiz (`adminti@gmail.com` / `adminti`). Setores ficam 100% zerados de movimentações e estoques.
+7. **Povoar ou Zerar o Banco de Dados:** Você possui 2 opções oficiais consolidadas:
+   - **Opção A — Produção / Base Limpa (Zera o Banco):**
+     Executa a migração completa com *drop de todas as tabelas*, zerando o banco por completo. Cataloga os polos com siglas oficiais, os 62 setores oficiais limpos, regimes de contratação, unidades de medida, grupos, fornecedores homologados e o catálogo oficial completo de produtos (417 itens), contendo apenas o usuário Super Admin raiz (`adminti@gmail.com` / `adminti`). Todos os setores ficam 100% zerados de movimentações e estoques.
      ```bash
      php artisan migrate:fresh --seed
      ```
-   - **Opção B — Demonstração / Homologação (Cenários Hiper-Realistas):**
-     Herda a base limpa e popula cenários hiper-realistas exclusivamente nos setores marcados com `(Exemplo)`, criando histórico de 90 dias com NFs, fornecedores ativos, controle especial da **Portaria 344/98** (SIMPAS e EAN-13), curvas de estoque (70% normal, 20% alerta reposição, 10% zerado), lotes saudáveis, críticos (15-25 dias) e vencidos (-10 dias), além de ciclo completo de movimentações (Rascunho, Pendente, Atendido FIFO, Reprovado, Cancelado, Atendimento parcial com item zerado, Devoluções auditadas e Consumo interno por avaria):
+   - **Opção B — Demonstração / Homologação (Zerar e Popular Cenários Hiper-Realistas):**
+     Para garantir um ambiente de demonstração limpo e sem resíduos de testes anteriores, zere o banco e execute o seeder oficial de demonstração:
      ```bash
+     php artisan migrate:fresh --seed
      php artisan db:seed --class=DemonstracaoSistemaSeeder
      ```
-     *Usuários demo criados (senha padrão `Admin123` via `USER_DEFAULT_PASSWORD`):*
-     - `admin.geral@progest.teste` (Admin - CAF e Polos)
+     *O que é populado com rigor técnico hospitalar:*
+     - Setores de exemplo (`(Exemplo)`) com cadeia de distribuição autorizada (`setor_distribuidor`).
+     - Entradas por Nota Fiscal de fornecedores reais (Eurofarma, Cristália, Fresenius, Cremer) exclusivamente nos almoxarifados centrais (CAF).
+     - Ressuprimentos entre estoques e dispensações hospitalares via FIFO real.
+     - Ciclo completo de pedidos (Aprovado, Atendimento parcial, Reprovado com parecer, Cancelado pelo solicitante, Pendente em triagem e Rascunho aberto).
+     - Devoluções auditadas com estorno de saldo físico de lotes e baixas por quebra/consumo interno.
+     - **Invariante de estoque 100% íntegra:** `estoque.quantidade_atual == sum(estoque_lotes.quantidade_disponivel)`.
+     
+     *Credenciais oficiais de teste (senha padrão `Admin123` via `USER_DEFAULT_PASSWORD`):*
+     - `admin.geral@progest.teste` (Admin Geral - Polos e CAF)
      - `almoxarife.caf@progest.teste` (Almoxarife CAF / HGVC)
      - `solicitante.uti@progest.teste` (Solicitante UTI Adulto / HGVC)
      - `almoxarife.hap@progest.teste` (Almoxarife Central / HAP)
@@ -97,13 +106,16 @@ Ideal para simular o ambiente de produção com domínios reais e Proxy Reverso.
    ```bash
    docker compose -f docker-compose.local.yml up -d --build
    ```
-6. **Prepare o Banco de Dados:**
-   - **Base Limpa de Produção:**
+6. **Prepare ou Zere o Banco de Dados:**
+   - **Base Limpa de Produção (Zera o Banco):**
+     *Dropa todas as tabelas*, recria a estrutura limpa e popula polos (com siglas), 62 setores oficiais limpos, regimes, unidades e catálogo oficial (417 produtos) com Super Admin raiz:
      ```bash
      docker compose -f docker-compose.local.yml exec progest-api php artisan migrate:fresh --seed
      ```
-   - **Ambiente de Demonstração / Homologação:**
+   - **Ambiente de Demonstração / Homologação (Zerar e Carregar Cenários Reais):**
+     Executa o reset limpo e em seguida popula a cadeia de distribuição hospitalar, NFs, lotes FIFO, movimentações completas e devoluções auditadas:
      ```bash
+     docker compose -f docker-compose.local.yml exec progest-api php artisan migrate:fresh --seed
      docker compose -f docker-compose.local.yml exec progest-api php artisan db:seed --class=DemonstracaoSistemaSeeder
      ```
 

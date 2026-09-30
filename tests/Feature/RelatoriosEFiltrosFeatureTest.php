@@ -16,7 +16,6 @@ use App\Models\ItensEntrada;
 use Database\Seeders\RegimeContratacaoSeeder;
 use Database\Seeders\PolosESetoresDemoSeeder;
 use Database\Seeders\AdminInicialSeeder;
-use Database\Seeders\UsuariosEPerfisSeeder;
 use Database\Seeders\CatalogoProdutosOficialSeeder;
 use Database\Seeders\FornecedoresSeeder;
 use Laravel\Sanctum\Sanctum;
@@ -42,13 +41,29 @@ class RelatoriosEFiltrosFeatureTest extends TestCase
             RegimeContratacaoSeeder::class,
             PolosESetoresDemoSeeder::class,
             AdminInicialSeeder::class,
-            UsuariosEPerfisSeeder::class,
             CatalogoProdutosOficialSeeder::class,
             FornecedoresSeeder::class,
         ]);
 
         $this->superAdmin = User::where('email', 'adminti@gmail.com')->firstOrFail();
-        $this->solicitanteClinica = User::where('email', 'jeansolicitante@gmail.com')->firstOrFail();
+        $this->clinicaMedica = Setores::where('nome', 'CLÍNICA MÉDICA')->firstOrFail();
+
+        $regimeId = \Illuminate\Support\Facades\DB::table('regime_contratacao')->value('id') ?? 1;
+        $this->solicitanteClinica = User::create([
+            'name'                  => 'SOLICITANTE CLINICA TESTE',
+            'email'                 => 'solicitante.clinica@progest.teste',
+            'password'              => bcrypt('Admin123'),
+            'cpf'                   => '55555555551',
+            'telefone'              => '77999990051',
+            'data_nascimento'       => '1990-01-01',
+            'status'                => 'A',
+            'regime_contratacao_id' => $regimeId,
+        ]);
+        \Illuminate\Support\Facades\DB::table('usuario_setor')->insert([
+            'usuario_id' => $this->solicitanteClinica->id,
+            'setor_id'   => $this->clinicaMedica->id,
+            'perfil'     => 'solicitante',
+        ]);
 
         $this->caf = Setores::where('nome', 'CENTRAL DE ABASTECIMENTO FARMACÊUTICO (CAF)')->firstOrFail();
         $this->farmaciaDispensacao = Setores::where('nome', 'FARMÁCIA DE DISPENSAÇÃO')->firstOrFail();
