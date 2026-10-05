@@ -1,9 +1,9 @@
 apiVersion: backstage.io/v1alpha1
 kind: System
 metadata:
-  name: backend-progest-base
-  title: "backend-progest-base"
-  description: "Sistema backend-progest-base analisado automaticamente"
+  name: progest
+  title: "progest"
+  description: "Sistema hospitalar integrado para controle de estoques, rastreabilidade de lotes com critério FIFO/FEFO, dispensação setorial e gestão de medicamentos controlados (Portaria 344/98 e SIMPAS)."
   annotations:
     github.com/project-slug: "chvcti/backend-progest-base"
     backstage.io/techdocs-ref: "dir:."
@@ -13,8 +13,8 @@ spec:
 apiVersion: backstage.io/v1alpha1
 kind: Resource
 metadata:
-  name: backend-progest-base-mysql-db
-  title: "backend-progest-base-mysql-db"
+  name: progest-base-mysql-db
+  title: "progest-base-mysql-db"
   description: "Recurso backend-progest-base-mysql-db (database)"
   tags:
     - mysql
@@ -24,13 +24,13 @@ spec:
   type: database
   lifecycle: experimental
   owner: user:ifba
-  system: backend-progest-base
+  system: progest
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Resource
 metadata:
-  name: backend-progest-base-redis-cache
-  title: "backend-progest-base-redis-cache"
+  name: progest-base-redis-cache
+  title: "progest-base-redis-cache"
   description: "Recurso backend-progest-base-redis-cache (cache)"
   tags:
     - redis
@@ -40,22 +40,21 @@ spec:
   type: cache
   lifecycle: experimental
   owner: user:ifba
-  system: backend-progest-base
+  system: progest
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: backend-progest-base
-  title: "backend-progest-base"
-  description: "Componente backend-progest-base-backend (service)"
+  name: progest-backend-base
+  title: "progest-backend-base"
+  description: "Núcleo de regras de negócio, persistência de dados e segurança do ecossistema hospitalar ProGest. Desenvolvido em **PHP 8.2** sobre o framework **Laravel 10**, a aplicação é responsável pelo gerenciamento de estoques, rastreabilidade física de lotes por critério FIFO/FEFO, dispensação assistencial para enfermarias e UTIs, cadeia de ressuprimento hospitalar e conformidade regulatória com a **Portaria SVS/MS nº 344/1998** e com o catálogo **SIMPAS Bahia**."
   annotations:
     github.com/project-slug: "chvcti/backend-progest-base"
-    backstage.io/techdocs-ref: "dir:."
 spec:
   type: service
   lifecycle: experimental
   owner: user:ifba
-  system: backend-progest-base
+  system: progest
   dependsOn:
     - resource:default/backend-progest-base-mysql-db
     - resource:default/backend-progest-base-redis-cache
