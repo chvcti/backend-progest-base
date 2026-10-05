@@ -1,0 +1,37 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: progest-backend-api
+  title: ProGest Backend API
+  description: API RESTful do Sistema Hospitalar ProGest para controle de estoque, rastreabilidade FIFO/FEFO, dispensação setorial e medicamentos controlados (Portaria 344/98 e SIMPAS Bahia).
+  tags:
+    - php
+    - laravel
+    - rest-api
+    - mysql
+    - hospitalar
+    - healthcare
+    - estoque
+  links:
+    - url: https://github.com/progest-hgvca/backend-progest-base
+      title: Repositório GitHub
+      icon: github
+    - url: http://18.230.26.35/api/health
+      title: Endpoint de Healthcheck (AWS)
+      icon: web
+    - url: http://app.localhost/api/health
+      title: Endpoint Local (Docker)
+      icon: dashboard
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: progest-hgvca/backend-progest-base
+spec:
+  type: service
+  lifecycle: production
+  owner: squad-progest-hgvc
+  system: progest-hospitalar
+  providesApis:
+    - progest-rest-api
+  dependsOn:
+    - resource:progest-mysql-db
+    - component:traefik-proxy

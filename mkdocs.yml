@@ -1,0 +1,47 @@
+site_name: ProGest Backend API - Documentação Técnica
+site_description: Documentação de Arquitetura, Regras de Negócio e APIs do Backend ProGest no padrão Backstage TechDocs.
+site_url: https://github.com/progest-hgvca/backend-progest-base
+
+nav:
+  - Visão Geral: index.md
+  - Arquitetura & Design: architecture.md
+  - Regras de Negócio & Distribuição: domain-rules.md
+  - Catálogo de APIs: api-reference.md
+  - Modelo de Dados & Ledger: database-schema.md
+  - Segurança, Perfis & RBAC: permissions-security.md
+  - Dados & Seeders: seeders-data.md
+  - Deploy & Operações: deployment-operations.md
+
+plugins:
+  - techdocs-core
+
+theme:
+  name: material
+  language: pt-BR
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: deep purple
+    - scheme: slate
+      primary: indigo
+      accent: deep purple
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - tables
+  - toc:
+      permalink: true
