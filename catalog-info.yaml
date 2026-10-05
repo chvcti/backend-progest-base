@@ -1,37 +1,61 @@
 apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: backend-progest-base
+  title: "backend-progest-base"
+  description: "Sistema backend-progest-base analisado automaticamente"
+  annotations:
+    github.com/project-slug: "chvcti/backend-progest-base"
+    backstage.io/techdocs-ref: "dir:."
+spec:
+  owner: user:ifba
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: backend-progest-base-mysql-db
+  title: "backend-progest-base-mysql-db"
+  description: "Recurso backend-progest-base-mysql-db (database)"
+  tags:
+    - mysql
+  annotations:
+    github.com/project-slug: "chvcti/backend-progest-base"
+spec:
+  type: database
+  lifecycle: experimental
+  owner: user:ifba
+  system: backend-progest-base
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: backend-progest-base-redis-cache
+  title: "backend-progest-base-redis-cache"
+  description: "Recurso backend-progest-base-redis-cache (cache)"
+  tags:
+    - redis
+  annotations:
+    github.com/project-slug: "chvcti/backend-progest-base"
+spec:
+  type: cache
+  lifecycle: experimental
+  owner: user:ifba
+  system: backend-progest-base
+---
+apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: progest-backend-api
-  title: ProGest Backend API
-  description: API RESTful do Sistema Hospitalar ProGest para controle de estoque, rastreabilidade FIFO/FEFO, dispensação setorial e medicamentos controlados (Portaria 344/98 e SIMPAS Bahia).
-  tags:
-    - php
-    - laravel
-    - rest-api
-    - mysql
-    - hospitalar
-    - healthcare
-    - estoque
-  links:
-    - url: https://github.com/progest-hgvca/backend-progest-base
-      title: Repositório GitHub
-      icon: github
-    - url: http://18.230.26.35/api/health
-      title: Endpoint de Healthcheck (AWS)
-      icon: web
-    - url: http://app.localhost/api/health
-      title: Endpoint Local (Docker)
-      icon: dashboard
+  name: backend-progest-base
+  title: "backend-progest-base"
+  description: "Componente backend-progest-base-backend (service)"
   annotations:
-    backstage.io/techdocs-ref: dir:.
-    github.com/project-slug: progest-hgvca/backend-progest-base
+    github.com/project-slug: "chvcti/backend-progest-base"
+    backstage.io/techdocs-ref: "dir:."
 spec:
   type: service
-  lifecycle: production
-  owner: squad-progest-hgvc
-  system: progest-hospitalar
-  providesApis:
-    - progest-rest-api
+  lifecycle: experimental
+  owner: user:ifba
+  system: backend-progest-base
   dependsOn:
-    - resource:progest-mysql-db
-    - component:traefik-proxy
+    - resource:default/backend-progest-base-mysql-db
+    - resource:default/backend-progest-base-redis-cache
