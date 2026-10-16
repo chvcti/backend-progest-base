@@ -1,0 +1,101 @@
+name: progest-backend
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    # Caso prefira compilar a imagem diretamente no self-hosted runner, altere para:
+    # runs-on: self-hosted
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.CR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        if: github.event_name != 'pull_request'
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=sha
+
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v5
+        if: github.event_name != 'pull_request'
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy:
+    name: Deploy to VM
+    needs: build
+    runs-on: self-hosted
+    if: github.event_name != 'pull_request'
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository }}:main
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Log in to the Container registry
+        run: echo "${{ secrets.CR_PAT || secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Pull the new Docker images
+        run: docker pull ${{ env.IMAGE_NAME }}
+
+      - name: Tag pulled image as local latest
+        run: docker tag ${{ env.IMAGE_NAME }} progest-api:latest || true
+
+      - name: Inject environment variables
+        run: |
+          if [ -f ~/portal-ti/secrets-prod/.env ]; then
+            cp ~/portal-ti/secrets-prod/.env .env
+            cp ~/portal-ti/secrets-prod/.env .env.docker.production 2>/dev/null || true
+          fi
+
+      - name: Start services with Docker compose
+        run: |
+          if [ -f "docker-compose.prod.yaml" ]; then
+            docker compose -f docker-compose.prod.yaml up -d
+          elif [ -f "docker-compose.aws.yml" ]; then
+            docker compose -f docker-compose.aws.yml up -d
+          else
+            docker compose -f docker-compose.yml up -d
+          fi
+
+      - name: Run Laravel database migrations and optimize
+        run: |
+          # Aguarda subida do banco se necessário
+          sleep 5
+          # Executa como www-data para evitar problemas de permissão em storage/logs
+          docker compose exec -u www-data -T progest-api php artisan migrate --force
+          docker compose exec -u www-data -T progest-api php artisan config:cache
+          docker compose exec -u www-data -T progest-api php artisan route:cache
+          docker compose exec -u www-data -T progest-api php artisan view:cache

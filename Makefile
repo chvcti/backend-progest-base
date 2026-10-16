@@ -19,7 +19,7 @@ docker-up:
 migrate:
 	@echo "--- 3/3: Executando migrations do Laravel..."
 	@sleep 10
-	docker-compose exec -T progest-api php artisan migrate --force
+	docker-compose exec -u www-data -T progest-api php artisan migrate --force
 
 # Primeiro deploy (inclui criação do .env)
 first-deploy: docker-down docker-up migrate-fresh seed
@@ -28,27 +28,27 @@ first-deploy: docker-down docker-up migrate-fresh seed
 migrate-fresh:
 	@echo "--- Executando migrate:fresh..."
 	@sleep 10
-	docker-compose exec -T progest-api php artisan migrate:fresh --force
+	docker-compose exec -u www-data -T progest-api php artisan migrate:fresh --force
 
 # Roda seeders
 seed:
 	@echo "--- Executando db:seed..."
-	docker-compose exec -T progest-api php artisan db:seed --force
+	docker-compose exec -u www-data -T progest-api php artisan db:seed --force
 
 # Limpa cache do Laravel
 cache-clear:
 	@echo "--- Limpando cache do Laravel..."
-	docker-compose exec -T progest-api php artisan cache:clear
-	docker-compose exec -T progest-api php artisan config:clear
-	docker-compose exec -T progest-api php artisan route:clear
-	docker-compose exec -T progest-api php artisan view:clear
+	docker-compose exec -u www-data -T progest-api php artisan cache:clear
+	docker-compose exec -u www-data -T progest-api php artisan config:clear
+	docker-compose exec -u www-data -T progest-api php artisan route:clear
+	docker-compose exec -u www-data -T progest-api php artisan view:clear
 
 # Otimiza para produção
 optimize:
 	@echo "--- Otimizando Laravel para produção..."
-	docker-compose exec -T progest-api php artisan config:cache
-	docker-compose exec -T progest-api php artisan route:cache
-	docker-compose exec -T progest-api php artisan view:cache
+	docker-compose exec -u www-data -T progest-api php artisan config:cache
+	docker-compose exec -u www-data -T progest-api php artisan route:cache
+	docker-compose exec -u www-data -T progest-api php artisan view:cache
 
 # Alvo opcional para limpar completamente o ambiente
 clean:

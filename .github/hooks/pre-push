@@ -1,0 +1,6 @@
+#!/bin/sh
+echo "🔍 Validando Backend..."
+cd ../backend-progest-base || exit 1
+docker compose exec -T progest-api php artisan test || exit 1
+
+echo "✅ Tudo pronto para o deploy!"
