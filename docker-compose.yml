@@ -3,8 +3,7 @@ services:
     mysql:
         image: mysql:8.0
         command: --log-bin-trust-function-creators=1
-        ports:
-            - "3306:3306"
+        # Porta 3306 não exposta no host em produção (acesso exclusivo interno via progest-network)
         environment:
             - MYSQL_DATABASE=progest
             - MYSQL_USER=progest

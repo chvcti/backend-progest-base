@@ -75,9 +75,9 @@ jobs:
 
       - name: Inject environment variables
         run: |
-          if [ -f ~/portal-ti/secrets-prod/.env ]; then
-            cp ~/portal-ti/secrets-prod/.env .env
-            cp ~/portal-ti/secrets-prod/.env .env.docker.production 2>/dev/null || true
+          if [ -f ~/progest/backend/secrets-prod/.env ]; then
+            cp ~/progest/backend/secrets-prod/.env .env
+            cp ~/progest/backend/secrets-prod/.env .env.docker.production 2>/dev/null || true
           fi
 
       - name: Start services with Docker compose

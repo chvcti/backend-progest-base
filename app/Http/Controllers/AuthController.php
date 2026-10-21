@@ -29,22 +29,27 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $token = $user->createToken('my-app-token')->plainTextToken;
-        return response()->json(['user' => $user, 'token' => $token], 201);
+        // Verifica se a conta do usuário está ativa
+        if (isset($user->status) && $user->status !== 'A') {
+            return response()->json([
+                'status'  => false,
+                'message' => 'Conta inativa. Entre em contato com a administração do sistema.'
+            ], 403);
+        }
+
+        // Revoga tokens anteriores para prevenir acúmulo de sessões fantasmas
+        $user->tokens()->delete();
+
+        $token = $user->createToken('progest-auth-token')->plainTextToken;
+        return response()->json(['user' => $user, 'token' => $token], 200);
     }
 
     public function register(RegisterRequest $request)
     {
-        $data = $request->validated();
-
-        $user = User::create([
-            'name'     => $data['name'],
-            'email'    => $data['email'],
-            'password' => Hash::make($data['password']),
-        ]);
-
-        $token = $user->createToken('AppName')->plainTextToken;
-        return response()->json(['message' => 'Usuário registrado com sucesso!', 'token' => $token], 201);
+        return response()->json([
+            'status'  => false,
+            'message' => 'O auto-cadastro público está desativado por motivos de segurança institucional. Contate o administrador.'
+        ], 403);
     }
 
     public function logout(Request $request)

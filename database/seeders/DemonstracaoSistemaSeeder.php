@@ -29,6 +29,12 @@ class DemonstracaoSistemaSeeder extends Seeder
      */
     public function run()
     {
+        // Trava de segurança: impede que dados fictícios e senhas de teste sejam injetados em produção
+        if (app()->environment('production')) {
+            $this->command->error('⛔ [DemonstracaoSistemaSeeder] Operação bloqueada: Este seeder de homologação contém contas de teste e não pode ser executado em ambiente de PRODUÇÃO!');
+            return;
+        }
+
         $this->command->info('🏥 [DemonstracaoSistemaSeeder] Iniciando simulação hospitalar hiper-realista do ProGest...');
 
         // 0. Garante que a base oficial limpa existe antes de popular cenários de demonstração

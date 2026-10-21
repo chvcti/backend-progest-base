@@ -45,10 +45,11 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 // ============================================================
-// AUTENTICAÇÃO (público)
+// AUTENTICAÇÃO (público com rate limit estrito anti-força bruta)
 // ============================================================
-Route::post("login",    [AuthController::class, 'login']);
-Route::post("register", [AuthController::class, 'register']);
+Route::post("login", [AuthController::class, 'login'])->middleware('throttle:login');
+// Nota de Segurança: A rota de auto-registro público (/register) foi desativada.
+// Novos usuários devem ser cadastrados exclusivamente por administradores autenticados.
 
 // ============================================================
 // ROTAS PROTEGIDAS — exigem auth:sanctum

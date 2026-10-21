@@ -95,12 +95,22 @@ class User extends Authenticatable
     }
 
     /**
-     * Usuário super-admin hardcoded (tem todas as permissões)
-     * Retorna true se o email for adminti@gmail.com
+     * Verifica se o usuário possui perfil de Super Administrador.
+     * Suporta variável de ambiente/configuração institucional e retrocompatibilidade com adminti@gmail.com.
      */
     public function isSuperAdmin(): bool
     {
-        return isset($this->email) && mb_strtolower($this->email) === 'adminti@gmail.com';
+        if (!empty($this->is_super_admin)) {
+            return true;
+        }
+
+        $configuredEmail = config('app.admin_email') ?? env('ADMIN_DEFAULT_EMAIL', 'adminti@gmail.com');
+        if (isset($this->email)) {
+            $userEmail = mb_strtolower($this->email);
+            return $userEmail === mb_strtolower($configuredEmail) || $userEmail === 'adminti@gmail.com';
+        }
+
+        return false;
     }
 
     /**
